@@ -22,7 +22,7 @@ const store = {
 let photos = store.get('pa-photos', []);
 let tray = store.get('pa-tray', {});
 const S = Object.assign({ w: 30, h: 20, gap: 2, cut: true }, store.get('pa-size', {}));
-S.margin = 0; // 인쇄 여백은 0으로 고정
+S.margin = 10; // 스티커 용지라 가장자리 1cm는 항상 비워 둔다
 const now = new Date();
 let viewY = now.getFullYear(), viewM = now.getMonth(), selected = ymd(now);
 let loaded = photos.length > 0, uploading = false, jumped = false;
@@ -642,8 +642,9 @@ document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if
 function layout() {
   const aw = A4W - 2 * S.margin, ah = A4H - 2 * S.margin;
   const cols = Math.max(0, Math.floor((aw + S.gap) / (S.w + S.gap))), rows = Math.max(0, Math.floor((ah + S.gap) / (S.h + S.gap)));
-  const ox = (A4W - (cols * S.w + (cols - 1) * S.gap)) / 2; const cells = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push({ x: ox + c * (S.w + S.gap), y: S.margin + r * (S.h + S.gap) });
+  // 사진 묶음을 용지 가운데에 둔다 (가장자리는 최소 1cm)
+  const ox = (A4W - (cols * S.w + (cols - 1) * S.gap)) / 2, oy = (A4H - (rows * S.h + (rows - 1) * S.gap)) / 2; const cells = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push({ x: ox + c * (S.w + S.gap), y: oy + r * (S.h + S.gap) });
   return { cols, rows, per: cols * rows, cells };
 }
 const trayItems = () => Object.keys(tray).map((id) => photos.find((p) => p.id === id)).filter(Boolean).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || ''));
@@ -735,6 +736,184 @@ $('prSave').onclick = async () => {
     if (e instanceof AuthError) showConnect();
   } finally { btn.disabled = false; }
 };
+
+/* ---------------- 메모지 인쇄 (A4 위 76×76mm 6칸) ---------------- */
+const NOTE = 76;                         // 메모지 한 변 (mm)
+const NOTE_GX = 14, NOTE_GY = 14;        // 칸 사이 간격 (mm)
+const NOTE_X0 = (A4W - (2 * NOTE + NOTE_GX)) / 2;   // 22mm
+const NOTE_Y0 = (A4H - (3 * NOTE + 2 * NOTE_GY)) / 2; // 20.5mm
+const WEEK_KO = ['월', '화', '수', '목', '금', '토', '일'];
+const defSlot = () => ({ tpl: 'todo', title: '', items: '', spacing: 7, date: false });
+const memo = Object.assign({ slots: [], dx: 0, dy: 0, outline: false, cur: 0 }, store.get('pa-memo', {}));
+while (memo.slots.length < 6) memo.slots.push(defSlot());
+memo.slots = memo.slots.slice(0, 6).map((x) => Object.assign(defSlot(), x));
+const saveMemo = () => store.set('pa-memo', memo);
+function noteSlots(withOffset) {
+  const dx = withOffset ? +memo.dx || 0 : 0, dy = withOffset ? +memo.dy || 0 : 0; const out = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 2; c++) out.push({ x: NOTE_X0 + c * (NOTE + NOTE_GX) + dx, y: NOTE_Y0 + r * (NOTE + NOTE_GY) + dy });
+  return out;
+}
+/* 한 칸을 캔버스에 그린다. pxmm = 1mm당 픽셀 수 */
+function drawNote(slot, pxmm) {
+  const S0 = Math.round(NOTE * pxmm); const c = document.createElement('canvas'); c.width = S0; c.height = S0;
+  const g = c.getContext('2d'); const mm = (v) => v * pxmm;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, S0, S0);
+  if (slot.tpl === 'off') return c;
+  const pad = 5; const ink = '#2f2f2d', soft = '#a9a7a0', faint = '#cfcdc6';
+  const font = (sz, w) => `${w || 400} ${mm(sz)}px "Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+  g.textBaseline = 'alphabetic'; g.lineCap = 'round';
+  let top = pad;
+  if (slot.title || slot.date) {
+    const base = pad + 5;
+    if (slot.title) { g.fillStyle = ink; g.font = font(4.2, 500); g.fillText(slot.title, mm(pad), mm(base), mm(NOTE - pad * 2 - (slot.date ? 22 : 0))); }
+    if (slot.date) {
+      g.fillStyle = soft; g.font = font(2.6); g.textAlign = 'right';
+      g.fillText('.      .', mm(NOTE - pad), mm(base)); g.textAlign = 'left';
+      g.strokeStyle = faint; g.lineWidth = mm(0.2); g.beginPath(); g.moveTo(mm(NOTE - pad - 20), mm(base + 1)); g.lineTo(mm(NOTE - pad), mm(base + 1)); g.stroke();
+    }
+    g.strokeStyle = ink; g.lineWidth = mm(0.3); g.beginPath(); g.moveTo(mm(pad), mm(base + 2.2)); g.lineTo(mm(NOTE - pad), mm(base + 2.2)); g.stroke();
+    top = base + 2.2;
+  }
+  const sp = Math.max(5, Math.min(12, +slot.spacing || 7)); const bottom = NOTE - pad;
+  if (slot.tpl === 'lines' || slot.tpl === 'todo') {
+    const items = slot.tpl === 'todo' ? (slot.items || '').split('\n').map((t) => t.trim()).filter(Boolean) : [];
+    let i = 0;
+    for (let y = top + sp; y <= bottom + 0.01; y += sp, i++) {
+      g.strokeStyle = faint; g.lineWidth = mm(0.2); g.beginPath();
+      if (slot.tpl === 'todo') {
+        const box = Math.min(3.4, sp - 2.4); const bx = pad, by = y - box - 1;
+        g.strokeStyle = soft; g.lineWidth = mm(0.25); g.strokeRect(mm(bx), mm(by), mm(box), mm(box));
+        g.strokeStyle = faint; g.lineWidth = mm(0.2); g.beginPath(); g.moveTo(mm(pad + box + 2), mm(y)); g.lineTo(mm(NOTE - pad), mm(y)); g.stroke();
+        if (items[i]) { g.fillStyle = ink; g.font = font(Math.min(3.3, sp * 0.48)); g.fillText(items[i], mm(pad + box + 2.6), mm(y - 1.1), mm(NOTE - pad * 2 - box - 3)); }
+      } else { g.moveTo(mm(pad), mm(y)); g.lineTo(mm(NOTE - pad), mm(y)); g.stroke(); }
+    }
+  } else if (slot.tpl === 'grid' || slot.tpl === 'dots') {
+    const step = 5; const x0 = pad, x1 = NOTE - pad, y0 = top + 2, y1 = bottom;
+    const nx = Math.floor((x1 - x0) / step), ny = Math.floor((y1 - y0) / step);
+    const ox = x0 + ((x1 - x0) - nx * step) / 2, oy = y0 + ((y1 - y0) - ny * step) / 2;
+    if (slot.tpl === 'grid') {
+      g.strokeStyle = faint; g.lineWidth = mm(0.18); g.beginPath();
+      for (let i = 0; i <= nx; i++) { g.moveTo(mm(ox + i * step), mm(oy)); g.lineTo(mm(ox + i * step), mm(oy + ny * step)); }
+      for (let j = 0; j <= ny; j++) { g.moveTo(mm(ox), mm(oy + j * step)); g.lineTo(mm(ox + nx * step), mm(oy + j * step)); }
+      g.stroke();
+    } else {
+      g.fillStyle = soft;
+      for (let i = 0; i <= nx; i++) for (let j = 0; j <= ny; j++) { g.beginPath(); g.arc(mm(ox + i * step), mm(oy + j * step), mm(0.32), 0, Math.PI * 2); g.fill(); }
+    }
+  } else if (slot.tpl === 'week') {
+    const rows = 7; const h = (bottom - top) / rows;
+    for (let i = 0; i < rows; i++) {
+      const y = top + h * (i + 1);
+      g.fillStyle = i === 6 ? '#a3333d' : i === 5 ? '#4c6a8a' : ink; g.font = font(Math.min(3.4, h * 0.42), 500);
+      g.fillText(WEEK_KO[i], mm(pad), mm(y - h * 0.32));
+      g.strokeStyle = faint; g.lineWidth = mm(0.2); g.beginPath(); g.moveTo(mm(pad), mm(y)); g.lineTo(mm(NOTE - pad), mm(y)); g.stroke();
+    }
+    g.strokeStyle = faint; g.beginPath(); g.moveTo(mm(pad + 6), mm(top)); g.lineTo(mm(pad + 6), mm(bottom)); g.stroke();
+  }
+  return c;
+}
+let fontsReady = null;
+function ensureFonts() {
+  if (!fontsReady) fontsReady = (document.fonts && document.fonts.load ? Promise.all([document.fonts.load('400 16px "Noto Sans KR"', '가'), document.fonts.load('500 16px "Noto Sans KR"', '가')]) : Promise.resolve()).catch(() => {});
+  return fontsReady;
+}
+async function renderMemo() {
+  await ensureFonts();
+  const pv = $('mmPreview'); pv.innerHTML = '';
+  const top = document.createElement('div'); top.className = 'toplabel'; top.textContent = '▲ 위쪽 (프린터에 먼저 들어가는 쪽)'; pv.appendChild(top);
+  noteSlots(false).forEach((pos, i) => {
+    const sl = memo.slots[i]; const b = document.createElement('button'); b.type = 'button';
+    b.className = 'slot' + (sl.tpl === 'off' ? ' off' : ''); b.setAttribute('aria-pressed', String(i === memo.cur)); b.setAttribute('aria-label', `${i + 1}번 칸 편집`);
+    b.style.left = pos.x / A4W * 100 + '%'; b.style.top = pos.y / A4H * 100 + '%'; b.style.width = NOTE / A4W * 100 + '%'; b.style.height = NOTE / A4H * 100 + '%';
+    if (sl.tpl !== 'off') b.appendChild(drawNote(sl, 4));
+    const no = document.createElement('span'); no.className = 'no'; no.textContent = i + 1; b.appendChild(no);
+    b.onclick = () => { memo.cur = i; saveMemo(); loadSlotForm(); renderMemo(); };
+    pv.appendChild(b);
+  });
+  const ss = $('mmSlotSel'); ss.innerHTML = '';
+  memo.slots.forEach((sl, i) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small'; b.textContent = i + 1;
+    b.setAttribute('aria-pressed', String(i === memo.cur)); b.setAttribute('aria-label', `${i + 1}번 칸`);
+    b.onclick = () => { memo.cur = i; saveMemo(); loadSlotForm(); renderMemo(); }; ss.appendChild(b);
+  });
+}
+function loadSlotForm() {
+  const sl = memo.slots[memo.cur];
+  $('mmTpl').value = sl.tpl; $('mmTitleIn').value = sl.title; $('mmItems').value = sl.items; $('mmSpacing').value = sl.spacing; $('mmDate').checked = !!sl.date;
+  $('mmItemsWrap').hidden = sl.tpl !== 'todo';
+  $('mmSpacing').closest('.field').hidden = !(sl.tpl === 'todo' || sl.tpl === 'lines');
+  $('mmDx').value = memo.dx; $('mmDy').value = memo.dy; $('mmOutline').checked = !!memo.outline;
+}
+function readSlotForm() {
+  const sl = memo.slots[memo.cur];
+  sl.tpl = $('mmTpl').value; sl.title = $('mmTitleIn').value.trim(); sl.items = $('mmItems').value;
+  sl.spacing = Math.max(5, Math.min(12, parseFloat($('mmSpacing').value) || 7)); sl.date = $('mmDate').checked;
+  saveMemo(); loadSlotForm(); renderMemo();
+}
+['mmTpl', 'mmDate'].forEach((id) => $(id).addEventListener('change', readSlotForm));
+['mmTitleIn', 'mmItems', 'mmSpacing'].forEach((id) => { let t; $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(readSlotForm, 250); }); });
+['mmDx', 'mmDy'].forEach((id) => $(id).addEventListener('change', () => {
+  const v = (k) => { const n = parseFloat($(k).value); return isFinite(n) ? Math.max(-15, Math.min(15, n)) : 0; };
+  memo.dx = v('mmDx'); memo.dy = v('mmDy'); saveMemo(); loadSlotForm();
+}));
+$('mmOutline').addEventListener('change', (e) => { memo.outline = e.target.checked; saveMemo(); });
+$('mmApplyAll').onclick = () => {
+  const src = memo.slots[memo.cur]; memo.slots = memo.slots.map(() => Object.assign({}, src)); saveMemo(); renderMemo();
+  $('mmStatus').textContent = `${memo.cur + 1}번 칸 설정을 6칸 모두에 적용했어요.`;
+};
+function savePdf(doc, name, statusEl) {
+  const url = URL.createObjectURL(doc.output('blob'));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  statusEl.textContent = `${name}을(를) 다운로드 폴더에 저장했어요. 실제 크기(100%)로 인쇄하세요.`;
+}
+$('mmGuide').onclick = () => {
+  if (!window.jspdf) { $('mmStatus').textContent = 'PDF 도구를 불러오지 못했어요. 앱을 새로고침해 주세요.'; return; }
+  const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  // 위쪽 방향 표시 (화살표)
+  doc.setDrawColor(60); doc.setLineWidth(0.4); doc.line(105, 4, 105, 12); doc.line(105, 4, 102, 7.5); doc.line(105, 4, 108, 7.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110); doc.text('TOP  /  STICKY EDGE UP', 111, 9);
+  noteSlots(false).forEach((p, i) => {
+    doc.setDrawColor(70); doc.setLineWidth(0.25); doc.rect(p.x, p.y, NOTE, NOTE);
+    // 접착면 표시 (위쪽 띠)
+    doc.setDrawColor(170); doc.setLineWidth(0.15); doc.setLineDashPattern([1, 1], 0); doc.line(p.x, p.y + 15, p.x + NOTE, p.y + 15); doc.setLineDashPattern([], 0);
+    doc.setFontSize(6); doc.setTextColor(150); doc.text('GLUE', p.x + 2, p.y + 13.5);
+    doc.setFontSize(16); doc.setTextColor(200); doc.text(String(i + 1), p.x + NOTE / 2, p.y + NOTE / 2 + 2, { align: 'center' });
+    // 중심 십자선 (어긋남 확인용)
+    doc.setDrawColor(120); doc.setLineWidth(0.15);
+    doc.line(p.x + NOTE / 2 - 4, p.y + NOTE / 2 + 8, p.x + NOTE / 2 + 4, p.y + NOTE / 2 + 8);
+    doc.line(p.x + NOTE / 2, p.y + NOTE / 2 + 4, p.x + NOTE / 2, p.y + NOTE / 2 + 12);
+    // 바깥쪽 눈금 (1mm 간격, 5mm마다 길게) — 메모지 가장자리와 인쇄 위치 차이를 잴 때 사용
+    for (let k = -8; k <= 8; k++) {
+      const L = k % 5 === 0 ? 2.5 : 1.2;
+      doc.line(p.x + 10 + k, p.y - L, p.x + 10 + k, p.y);            // 위쪽 가장자리 가로 눈금
+      doc.line(p.x - L, p.y + 30 + k, p.x, p.y + 30 + k);            // 왼쪽 가장자리 세로 눈금
+    }
+  });
+  doc.setFontSize(7); doc.setTextColor(120);
+  doc.text('Note 76 x 76 mm  |  print at 100% (actual size)', 105, 292, { align: 'center' });
+  savePdf(doc, '메모지_위치가이드_A4.pdf', $('mmStatus'));
+};
+$('mmPrint').onclick = async () => {
+  if (!window.jspdf) { $('mmStatus').textContent = 'PDF 도구를 불러오지 못했어요. 앱을 새로고침해 주세요.'; return; }
+  const active = memo.slots.filter((x) => x.tpl !== 'off').length;
+  if (!active) { $('mmStatus').textContent = '인쇄할 칸이 없어요. 한 칸 이상 템플릿을 골라주세요.'; return; }
+  $('mmStatus').textContent = 'PDF 만드는 중…'; await ensureFonts();
+  const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+  const pos = noteSlots(true);
+  memo.slots.forEach((sl, i) => {
+    if (sl.tpl === 'off') return;
+    const c = drawNote(sl, DPMM);
+    doc.addImage(c.toDataURL('image/png'), 'PNG', pos[i].x, pos[i].y, NOTE, NOTE, 'note' + i, 'FAST');
+    if (memo.outline) { doc.setDrawColor(185); doc.setLineWidth(0.1); doc.rect(pos[i].x, pos[i].y, NOTE, NOTE); }
+  });
+  savePdf(doc, `메모지_${active}칸_${ymd(new Date()).replace(/-/g, '')}.pdf`, $('mmStatus'));
+};
+function openMemo() { $('memoModal').hidden = false; $('mmStatus').textContent = ''; loadSlotForm(); renderMemo(); $('mmClose').focus(); }
+function closeMemo() { $('memoModal').hidden = true; }
+$('memoBtn').onclick = openMemo; $('mmClose').onclick = closeMemo;
+$('memoModal').addEventListener('click', (e) => { if (e.target === $('memoModal')) closeMemo(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('memoModal').hidden) closeMemo(); });
 
 /* ---------------- 메뉴 · 설치 · 연결 ---------------- */
 $('optOriginal').checked = !!store.get('pa-original', false);

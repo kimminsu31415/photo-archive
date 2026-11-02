@@ -20,6 +20,7 @@
     <h1>PHOTO ARCHIVE · 사진 보관함</h1>
     <label class="btn primary upload" id="uploadBtn" hidden>＋ 사진 추가<input type="file" id="file" accept="image/*" multiple aria-label="사진 추가"></label>
     <button class="btn" id="syncBtn" type="button" hidden title="드라이브와 동기화">↻ <span id="syncLabel">동기화</span></button>
+    <button class="btn" id="memoBtn" type="button">메모지 인쇄</button>
     <button class="btn" id="trayBtn" type="button">인쇄 목록 <span class="badge" id="trayCount">0</span></button>
     <button class="btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="menu">설정</button>
   </header>
@@ -119,12 +120,68 @@
           <label class="field">간격 (mm)<input type="number" id="sgap" min="0" max="20" step="0.5" value="2"></label>
         </div>
         <label class="check"><input type="checkbox" id="scut" checked> 재단선 표시</label>
+        <p class="note">스티커 용지에 맞춰 가장자리 1cm는 항상 비우고, 사진 묶음을 용지 가운데에 놓아요.</p>
         <p class="note" id="prSummary"></p>
         <div class="row"><button class="btn primary" type="button" id="prSave">PDF 저장</button><button class="btn" type="button" id="prClear">목록 비우기</button></div>
         <div class="status" id="prStatus" role="status"></div>
         <p class="note">인쇄할 때 크기 조정 없이 <b>실제 크기(100%)</b>로 출력해야 정확한 크기가 나와요.</p>
       </div>
       <div class="pages" id="prPages"></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 메모지 인쇄 -->
+<div class="modal" id="memoModal" hidden>
+  <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="mmTitle">
+    <div class="head"><h2 id="mmTitle">메모지 인쇄 · A4 · 7.6×7.6 cm × 6칸</h2><button class="btn small" type="button" id="mmClose">닫기</button></div>
+    <div class="cols">
+      <div class="stack">
+        <div class="memo-a4" id="mmPreview" aria-label="A4 미리보기. 칸을 눌러 편집할 칸을 고르세요"></div>
+        <p class="note">칸을 누르면 그 칸의 템플릿을 고칠 수 있어요.</p>
+      </div>
+      <div class="stack">
+        <div class="slotsel" id="mmSlotSel" role="tablist" aria-label="편집할 칸"></div>
+        <label class="field">템플릿
+          <select id="mmTpl" class="sel">
+            <option value="off">사용 안 함 (이 칸은 비워 둠)</option>
+            <option value="todo">투두 (체크박스)</option>
+            <option value="lines">줄글 (가로줄)</option>
+            <option value="grid">모눈 (5mm)</option>
+            <option value="dots">점선 (5mm 점)</option>
+            <option value="week">주간 (월~일)</option>
+            <option value="blank">빈 메모 (제목만)</option>
+          </select>
+        </label>
+        <label class="field">제목 (비우면 제목 없이)<input type="text" id="mmTitleIn" maxlength="30" placeholder="예: 오늘 할 일"></label>
+        <label class="field" id="mmItemsWrap">미리 적어 둘 할 일 (한 줄에 하나, 비워도 돼요)<textarea id="mmItems" rows="4" placeholder="장보기&#10;은행 들르기"></textarea></label>
+        <div class="grid2">
+          <label class="field">줄 간격 (mm)<input type="number" id="mmSpacing" min="5" max="12" step="0.5" value="7"></label>
+          <label class="check"><input type="checkbox" id="mmDate"> 오른쪽 위에 날짜 칸</label>
+        </div>
+        <div class="row"><button class="btn small" type="button" id="mmApplyAll">이 설정을 6칸 모두에 적용</button></div>
+
+        <details class="howto" open>
+          <summary>메모지에 바로 인쇄하는 방법</summary>
+          <ol>
+            <li><b>위치 가이드 PDF</b>를 일반 A4에 인쇄해요.</li>
+            <li>가이드의 네모 칸에 메모지를 맞춰 붙여요. <b>접착 부분이 종이 위쪽(▲ 표시)</b>을 향하게 붙여야 프린터에 걸리지 않아요.</li>
+            <li>그 종이를 같은 방향으로 프린터에 넣고 <b>메모지 내용 PDF</b>를 <b>실제 크기(100%)</b>로 인쇄해요.</li>
+            <li>위치가 어긋나면 가이드의 눈금으로 몇 mm 밀렸는지 보고 아래 위치 보정에 넣어요. 오른쪽·아래로 밀렸으면 음수(-)로 넣어요.</li>
+          </ol>
+        </details>
+        <div class="grid2">
+          <label class="field">위치 보정 가로 (mm)<input type="number" id="mmDx" min="-15" max="15" step="0.5" value="0"></label>
+          <label class="field">위치 보정 세로 (mm)<input type="number" id="mmDy" min="-15" max="15" step="0.5" value="0"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="mmOutline"> 칸 테두리도 인쇄 (메모지 없이 A4에 인쇄해 잘라 쓸 때)</label>
+        <div class="row">
+          <button class="btn" type="button" id="mmGuide">① 위치 가이드 PDF</button>
+          <button class="btn primary" type="button" id="mmPrint">② 메모지 내용 PDF</button>
+        </div>
+        <div class="status" id="mmStatus" role="status"></div>
+      </div>
     </div>
   </div>
 </div>

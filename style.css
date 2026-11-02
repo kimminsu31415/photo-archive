@@ -140,3 +140,21 @@ img{max-width:100%}
 .tile.chosen .ck{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .datein{border:1px solid var(--rule-strong);border-radius:2px;padding:4px 8px;min-height:32px;background:var(--paper);color:var(--ink);font-family:var(--mono);font-size:.8rem}
 .tile .open[draggable="true"]{cursor:grab}
+
+.sheet.wide{max-width:980px}
+.memo-a4{position:relative;width:100%;max-width:380px;aspect-ratio:210/297;background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,.25);align-self:center}
+.memo-a4 .slot{position:absolute;padding:0;border:1px dashed #b8b6ae;background:#fffdf3;cursor:pointer;overflow:hidden}
+.memo-a4 .slot canvas{display:block;width:100%;height:100%}
+.memo-a4 .slot.off{background:repeating-linear-gradient(45deg,#f4f3ef 0 6px,#fbfbf9 6px 12px)}
+.memo-a4 .slot[aria-pressed="true"]{outline:2px solid #3b3a37;outline-offset:1px;border-style:solid}
+.memo-a4 .slot .no{position:absolute;left:3px;top:2px;font-family:var(--mono);font-size:.62rem;color:#8c8a84}
+.memo-a4 .toplabel{position:absolute;left:0;right:0;top:4px;text-align:center;font-size:.6rem;letter-spacing:.2em;color:#8c8a84}
+.slotsel{display:flex;gap:6px;flex-wrap:wrap}
+.slotsel .btn{min-width:42px;justify-content:center}
+.slotsel .btn[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.sel,.stack textarea{border:1px solid var(--rule-strong);border-radius:2px;padding:7px 10px;background:var(--paper);color:var(--ink);min-height:38px;width:100%;font:inherit}
+.stack textarea{resize:vertical;line-height:1.6}
+.howto{border:1px solid var(--rule);padding:8px 12px;font-size:.84rem}
+.howto summary{cursor:pointer;font-weight:500}
+.howto ol{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:4px;color:var(--muted)}
+.howto b{color:var(--ink);font-weight:500}
