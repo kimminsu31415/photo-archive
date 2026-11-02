@@ -491,6 +491,8 @@ function byDate() {
 }
 function render() { renderCal(); renderPanel(); updateTrayCount(); }
 function renderCal() {
+  // 달력 연·월이 숫자가 아니게 되면 오늘로 되돌린다
+  if (!Number.isInteger(viewY) || !Number.isInteger(viewM) || viewM < 0 || viewM > 11) { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); }
   const g = byDate();
   $('mNum').textContent = viewM + 1; $('mYear').textContent = viewY; $('mEn').textContent = MEN[viewM];
   const grid = $('grid'); grid.innerHTML = '';
@@ -1034,7 +1036,8 @@ async function sync(force) {
     photos = fresh; loaded = true; savePhotos(); lastSync = Date.now();
     if (!jumped && photos.length) {
       jumped = true; const mk = `${viewY}-${String(viewM + 1).padStart(2, '0')}`;
-      if (!photos.some((p) => p.date.startsWith(mk))) { const last = photos.map((p) => p.date).sort().pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
+      const dated = photos.map((p) => p.date).filter((d) => d !== UNDATED).sort();
+      if (dated.length && !dated.some((d) => d.startsWith(mk))) { const last = dated.pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
     }
     if (changed && $('photoModal').hidden) render(); else updateTrayCount();
     if (force) note('');
