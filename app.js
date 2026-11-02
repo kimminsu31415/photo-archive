@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-13'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-14'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -173,7 +173,8 @@ function fromFile(f) {
     id: f.id, name: f.name, parent: (f.parents || [])[0] || null, date: a.date || ymd(created), takenAt: a.takenAt || `${ymd(created)}T${hm(created)}`,
     caption: f.description || '', zoom: +a.zoom || 1, cx: a.cx != null ? +a.cx : 0.5, cy: a.cy != null ? +a.cy : 0.5, rot: +a.rot || 0,
     w: +a.w || im.width || 0, h: +a.h || im.height || 0, sha: a.sha || '', dh: a.dh || '',
-    src: a.src || '', created: ymd(created)
+    src: a.src || '', created: ymd(created),
+    ot: a.ot || ((a.src === 'exif' || a.src === 'name') ? (a.takenAt || '') : '') // 사진에 원래 적힌 찍은 시각 (중복 판별용)
   };
 }
 async function listAll() {
@@ -368,10 +369,19 @@ function hamming(a, b) {
   for (let i = 0; i < a.length; i++) { let x = parseInt(a[i], 16) ^ parseInt(b[i], 16); while (x) { n += x & 1; x >>= 1; } }
   return n;
 }
+/* 같은 사진인지: ① 파일이 똑같거나 ② 모양 지문이 거의 같고 사진에 적힌 찍은 시각(분)까지 같거나
+   ③ 찍은 시각을 모를 때는 모양 지문이 완전히 같고 가로세로 비율도 같아야 같은 사진으로 본다 */
 function findDup(fp, pool) {
-  return pool.find((p) => (fp.sha && p.sha && p.sha === fp.sha) ||
-    (fp.dh && p.dh && (() => { const d = hamming(fp.dh, p.dh); return d === 0 || (d <= 3 && p.date === fp.date); })()));
+  return pool.find((p) => {
+    if (fp.sha && p.sha && p.sha === fp.sha) return true;
+    if (!fp.dh || !p.dh) return false;
+    const d = hamming(fp.dh, p.dh);
+    if (fp.ot && p.ot) return d <= 4 && fp.ot === p.ot;
+    const ar = p.w && p.h ? p.w / p.h : 0;
+    return d === 0 && !!fp.ar && !!ar && Math.abs(fp.ar - ar) < 0.02;
+  });
 }
+const dayLabel = (date) => date === UNDATED ? '‘언제의 사진?’' : (() => { const d = new Date(date + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일`; })();
 /* 예전에 올려 지문이 없는 사진은 썸네일로 지문을 만들어 채운다 (중복 판별용) */
 let backfilling = false;
 async function backfillPrints() {
@@ -396,7 +406,7 @@ async function addFiles(list, forceDate) {
   const skipDup = $('optSkipDup').checked;
   if (skipDup && Date.now() - lastSync > 10000) { note('중복 확인을 위해 드라이브 목록을 먼저 확인하는 중…'); await sync(false); }
   uploading = true; const original = $('optOriginal').checked;
-  const inFlight = []; let dup = 0, undatedN = 0;
+  const inFlight = []; const toMove = [], dupWhere = []; let dup = 0, undatedN = 0;
   let ok = 0, bad = 0, done = 0; const dates = new Set(); let latest = null;
   const queue = files.slice();
   const worker = async () => {
@@ -412,8 +422,16 @@ async function addFiles(list, forceDate) {
           : lmOk ? { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}`, src: 'file' } : { date: UNDATED, at: '', src: 'none' };
         const sha = await shaOf(f);
         const im = await blobToImage(f);
-        const dh = dhashOf(im); const fp = { sha, dh, date: info.date };
-        if (skipDup && findDup(fp, photos.concat(inFlight))) { URL.revokeObjectURL(im.src); dup++; done++; note(`사진 올리는 중 ${done} / ${files.length}`); continue; }
+        const dh = dhashOf(im); const ot = (ex || nd) ? (ex || nd).at : '';
+        const fp = { sha, dh, date: info.date, ot, ar: dims(im)[0] / dims(im)[1] };
+        const same = skipDup && findDup(fp, photos.concat(inFlight));
+        if (same) {
+          URL.revokeObjectURL(im.src); dup++; done++; note(`사진 올리는 중 ${done} / ${files.length}`);
+          // 날짜를 정해서 올렸는데 같은 사진이 다른 날에 있으면, 새로 올리지 않고 그 사진을 이 날로 옮긴다
+          if (forceDate && same.id && same.date !== forceDate) { if (!toMove.includes(same.id)) toMove.push(same.id); }
+          else dupWhere.push(same.date || info.date);
+          continue;
+        }
         inFlight.push(fp);
         const [w0, h0] = dims(im);
         let blob = f, mime = f.type || 'image/jpeg', w = w0, h = h0;
@@ -424,7 +442,7 @@ async function addFiles(list, forceDate) {
         URL.revokeObjectURL(im.src);
         const base = (f.name || 'photo').replace(/\.[^.]+$/, '');
         const p = await uploadPhoto(blob, mime, datedName(`${base}.${mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1]}`, info.date),
-          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h), sha, dh, src: info.src }, '');
+          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h), sha, dh, src: info.src, ot }, '');
         await IDB.put('thumbs', thumb, p.id).catch(() => {});
         thumbURL.set(p.id, Promise.resolve(URL.createObjectURL(thumb)));
         photos.push(p); ok++; if (p.date === UNDATED) undatedN++; else { dates.add(p.date); if (!latest || p.date > latest) latest = p.date; }
@@ -438,14 +456,22 @@ async function addFiles(list, forceDate) {
   };
   await Promise.all([worker(), worker(), worker()]);
   uploading = false; savePhotos(); lastSync = Date.now(); setSyncLabel('동기화됨 ' + hm(new Date()));
-  if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
+  if (forceDate) { selected = forceDate; viewY = +forceDate.slice(0, 4); viewM = +forceDate.slice(5, 7) - 1; }
+  else if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
   else if (undatedN) selected = UNDATED;
   render();
-  const extra = (undatedN ? ` 찍은 날짜를 알 수 없는 ${undatedN}장은 ‘언제의 사진?’에 넣었어요.` : '') + (dup ? ` 이미 있는 사진 ${dup}장은 중복이라 뺐어요.` : '') + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
+  if (toMove.length) await movePhotos(toMove, forceDate);
+  const whereDup = (() => {
+    if (!dupWhere.length) return '';
+    const c = {}; dupWhere.forEach((d) => { c[d] = (c[d] || 0) + 1; });
+    return ` 이미 있는 사진 ${dupWhere.length}장은 건너뛰었어요 (` + Object.keys(c).sort().map((d) => `${dayLabel(d)} ${c[d]}장`).join(', ') + '에 있어요).';
+  })();
+  const moved = toMove.length ? ` 이미 다른 날에 있던 같은 사진 ${toMove.length}장은 ${dayLabel(forceDate)}로 옮겼어요.` : '';
+  const extra = (undatedN ? ` 찍은 날짜를 알 수 없는 ${undatedN}장은 ‘언제의 사진?’에 넣었어요.` : '') + moved + whereDup + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
   const where = forceDate ? (() => { const d = new Date(forceDate + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일에 넣었어요.`; })() : `${dates.size}개 날짜에 나눠 넣었어요.`;
   if (ok) note((ok - undatedN ? `${ok - undatedN}장을 ${where}` : '') + extra);
-  else if (dup && !bad) note(`고른 사진 ${dup}장이 모두 이미 보관함에 있어서 새로 올리지 않았어요.`);
-  else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.' + (dup ? ` 중복 ${dup}장은 뺐어요.` : ''));
+  else if (dup && !bad) note((moved + whereDup).trim());
+  else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.' + moved + whereDup);
   return ok;
 }
 const fileInput = $('file');
