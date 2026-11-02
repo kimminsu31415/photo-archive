@@ -143,10 +143,10 @@ img{max-width:100%}
 
 .sheet.wide{max-width:980px}
 .memo-a4{position:relative;width:100%;max-width:380px;aspect-ratio:210/297;background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,.25);align-self:center}
-.memo-a4 .slot{position:absolute;padding:0;border:1px dashed #b8b6ae;background:#fffdf3;cursor:pointer;overflow:hidden}
+.memo-a4 .slot{position:absolute;padding:0;border:0;background:#ffffff;cursor:pointer;overflow:hidden}
+.memo-a4 .slot.tpl{box-shadow:0 0 0 1px rgba(0,0,0,.06)}
 .memo-a4 .slot canvas{display:block;width:100%;height:100%}
-.memo-a4 .slot.off{background:repeating-linear-gradient(45deg,#f4f3ef 0 6px,#fbfbf9 6px 12px)}
-.memo-a4 .slot[aria-pressed="true"]{outline:2px solid #3b3a37;outline-offset:1px;border-style:solid}
+.memo-a4 .slot[aria-pressed="true"]{outline:2px solid #a3333d;outline-offset:2px}
 .memo-a4 .slot .no{position:absolute;left:3px;top:2px;font-family:var(--mono);font-size:.62rem;color:#8c8a84}
 .memo-a4 .toplabel{position:absolute;left:0;right:0;top:4px;text-align:center;font-size:.6rem;letter-spacing:.2em;color:#8c8a84}
 .slotsel{display:flex;gap:6px;flex-wrap:wrap}

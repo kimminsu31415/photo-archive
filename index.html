@@ -145,7 +145,7 @@
         <div class="slotsel" id="mmSlotSel" role="tablist" aria-label="편집할 칸"></div>
         <label class="field">템플릿
           <select id="mmTpl" class="sel">
-            <option value="off">사용 안 함 (이 칸은 비워 둠)</option>
+            <option value="off">사용 안 함 (메모지 붙일 자리 가이드만 인쇄)</option>
             <option value="todo">투두 (체크박스)</option>
             <option value="lines">줄글 (가로줄)</option>
             <option value="grid">모눈 (5mm)</option>
@@ -165,9 +165,9 @@
         <details class="howto" open>
           <summary>메모지에 바로 인쇄하는 방법</summary>
           <ol>
-            <li><b>위치 가이드 PDF</b>를 일반 A4에 인쇄해요.</li>
-            <li>가이드의 네모 칸에 메모지를 맞춰 붙여요. <b>접착 부분이 종이 위쪽(▲ 표시)</b>을 향하게 붙여야 프린터에 걸리지 않아요.</li>
-            <li>그 종이를 같은 방향으로 프린터에 넣고 <b>메모지 내용 PDF</b>를 <b>실제 크기(100%)</b>로 인쇄해요.</li>
+            <li>템플릿 없이(<b>사용 안 함</b>) 인쇄한 칸에는 메모지 붙일 자리 가이드가 나와요. 6칸 모두 가이드가 필요하면 <b>6칸 모두 가이드 PDF</b>를 쓰세요.</li>
+            <li>가이드 칸에 메모지를 맞춰 붙여요. <b>접착 부분이 종이 위쪽(▲ 표시)</b>을 향하게 붙여야 프린터에 걸리지 않아요.</li>
+            <li>칸마다 템플릿을 고르고 그 종이를 같은 방향으로 넣어 <b>PDF 저장</b>한 파일을 <b>실제 크기(100%)</b>로 인쇄해요. 템플릿 칸에는 테두리 없이 메모지 안 내용만 인쇄돼요.</li>
             <li>위치가 어긋나면 가이드의 눈금으로 몇 mm 밀렸는지 보고 아래 위치 보정에 넣어요. 오른쪽·아래로 밀렸으면 음수(-)로 넣어요.</li>
           </ol>
         </details>
@@ -175,10 +175,9 @@
           <label class="field">위치 보정 가로 (mm)<input type="number" id="mmDx" min="-15" max="15" step="0.5" value="0"></label>
           <label class="field">위치 보정 세로 (mm)<input type="number" id="mmDy" min="-15" max="15" step="0.5" value="0"></label>
         </div>
-        <label class="check"><input type="checkbox" id="mmOutline"> 칸 테두리도 인쇄 (메모지 없이 A4에 인쇄해 잘라 쓸 때)</label>
         <div class="row">
-          <button class="btn" type="button" id="mmGuide">① 위치 가이드 PDF</button>
-          <button class="btn primary" type="button" id="mmPrint">② 메모지 내용 PDF</button>
+          <button class="btn" type="button" id="mmGuide">6칸 모두 가이드 PDF</button>
+          <button class="btn primary" type="button" id="mmPrint">PDF 저장</button>
         </div>
         <div class="status" id="mmStatus" role="status"></div>
       </div>

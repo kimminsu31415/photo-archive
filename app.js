@@ -757,8 +757,19 @@ function noteSlots(withOffset) {
 function drawNote(slot, pxmm) {
   const S0 = Math.round(NOTE * pxmm); const c = document.createElement('canvas'); c.width = S0; c.height = S0;
   const g = c.getContext('2d'); const mm = (v) => v * pxmm;
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, S0, S0);
-  if (slot.tpl === 'off') return c;
+  // 배경은 투명: 템플릿 칸에는 선과 글자만 찍히고 메모지 바탕은 건드리지 않는다
+  if (slot.tpl === 'off') {
+    // 붙일 자리 가이드: 테두리, 접착 부분 점선, 가운데 십자선
+    g.strokeStyle = '#555'; g.lineWidth = Math.max(1, mm(0.25)); g.strokeRect(mm(0.15), mm(0.15), S0 - mm(0.3), S0 - mm(0.3));
+    g.setLineDash([mm(1), mm(1)]); g.strokeStyle = '#999'; g.lineWidth = Math.max(1, mm(0.15));
+    g.beginPath(); g.moveTo(0, mm(15)); g.lineTo(S0, mm(15)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#999'; g.font = `400 ${mm(2.4)}px sans-serif`; g.fillText('접착 부분', mm(2), mm(13.5));
+    g.strokeStyle = '#777'; g.lineWidth = Math.max(1, mm(0.15)); g.beginPath();
+    g.moveTo(mm(NOTE / 2 - 4), mm(NOTE / 2 + 8)); g.lineTo(mm(NOTE / 2 + 4), mm(NOTE / 2 + 8));
+    g.moveTo(mm(NOTE / 2), mm(NOTE / 2 + 4)); g.lineTo(mm(NOTE / 2), mm(NOTE / 2 + 12)); g.stroke();
+    g.fillStyle = '#c8c6bf'; g.font = `500 ${mm(9)}px sans-serif`; g.textAlign = 'center'; g.fillText('메모지 붙이기', mm(NOTE / 2), mm(NOTE / 2 + 1)); g.textAlign = 'left';
+    return c;
+  }
   const pad = 5; const ink = '#2f2f2d', soft = '#a9a7a0', faint = '#cfcdc6';
   const font = (sz, w) => `${w || 400} ${mm(sz)}px "Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
   g.textBaseline = 'alphabetic'; g.lineCap = 'round';
@@ -823,9 +834,9 @@ async function renderMemo() {
   const top = document.createElement('div'); top.className = 'toplabel'; top.textContent = '▲ 위쪽 (프린터에 먼저 들어가는 쪽)'; pv.appendChild(top);
   noteSlots(false).forEach((pos, i) => {
     const sl = memo.slots[i]; const b = document.createElement('button'); b.type = 'button';
-    b.className = 'slot' + (sl.tpl === 'off' ? ' off' : ''); b.setAttribute('aria-pressed', String(i === memo.cur)); b.setAttribute('aria-label', `${i + 1}번 칸 편집`);
+    b.className = 'slot' + (sl.tpl === 'off' ? ' guide' : ' tpl'); b.setAttribute('aria-pressed', String(i === memo.cur)); b.setAttribute('aria-label', `${i + 1}번 칸 편집`);
     b.style.left = pos.x / A4W * 100 + '%'; b.style.top = pos.y / A4H * 100 + '%'; b.style.width = NOTE / A4W * 100 + '%'; b.style.height = NOTE / A4H * 100 + '%';
-    if (sl.tpl !== 'off') b.appendChild(drawNote(sl, 4));
+    b.appendChild(drawNote(sl, 4));
     const no = document.createElement('span'); no.className = 'no'; no.textContent = i + 1; b.appendChild(no);
     b.onclick = () => { memo.cur = i; saveMemo(); loadSlotForm(); renderMemo(); };
     pv.appendChild(b);
@@ -842,7 +853,7 @@ function loadSlotForm() {
   $('mmTpl').value = sl.tpl; $('mmTitleIn').value = sl.title; $('mmItems').value = sl.items; $('mmSpacing').value = sl.spacing; $('mmDate').checked = !!sl.date;
   $('mmItemsWrap').hidden = sl.tpl !== 'todo';
   $('mmSpacing').closest('.field').hidden = !(sl.tpl === 'todo' || sl.tpl === 'lines');
-  $('mmDx').value = memo.dx; $('mmDy').value = memo.dy; $('mmOutline').checked = !!memo.outline;
+  $('mmDx').value = memo.dx; $('mmDy').value = memo.dy;
 }
 function readSlotForm() {
   const sl = memo.slots[memo.cur];
@@ -856,7 +867,6 @@ function readSlotForm() {
   const v = (k) => { const n = parseFloat($(k).value); return isFinite(n) ? Math.max(-15, Math.min(15, n)) : 0; };
   memo.dx = v('mmDx'); memo.dy = v('mmDy'); saveMemo(); loadSlotForm();
 }));
-$('mmOutline').addEventListener('change', (e) => { memo.outline = e.target.checked; saveMemo(); });
 $('mmApplyAll').onclick = () => {
   const src = memo.slots[memo.cur]; memo.slots = memo.slots.map(() => Object.assign({}, src)); saveMemo(); renderMemo();
   $('mmStatus').textContent = `${memo.cur + 1}번 칸 설정을 6칸 모두에 적용했어요.`;
@@ -867,47 +877,45 @@ function savePdf(doc, name, statusEl) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   statusEl.textContent = `${name}을(를) 다운로드 폴더에 저장했어요. 실제 크기(100%)로 인쇄하세요.`;
 }
+function guideSlot(doc, p, i) {
+  doc.setDrawColor(70); doc.setLineWidth(0.25); doc.rect(p.x, p.y, NOTE, NOTE);
+  doc.setDrawColor(170); doc.setLineWidth(0.15); doc.setLineDashPattern([1, 1], 0); doc.line(p.x, p.y + 15, p.x + NOTE, p.y + 15); doc.setLineDashPattern([], 0);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(150); doc.text('GLUE', p.x + 2, p.y + 13.5);
+  doc.setFontSize(16); doc.setTextColor(200); doc.text(String(i + 1), p.x + NOTE / 2, p.y + NOTE / 2 + 2, { align: 'center' });
+  doc.setDrawColor(120); doc.setLineWidth(0.15);
+  doc.line(p.x + NOTE / 2 - 4, p.y + NOTE / 2 + 8, p.x + NOTE / 2 + 4, p.y + NOTE / 2 + 8);
+  doc.line(p.x + NOTE / 2, p.y + NOTE / 2 + 4, p.x + NOTE / 2, p.y + NOTE / 2 + 12);
+  for (let k = -8; k <= 8; k++) {
+    const L = k % 5 === 0 ? 2.5 : 1.2;
+    doc.line(p.x + 10 + k, p.y - L, p.x + 10 + k, p.y);
+    doc.line(p.x - L, p.y + 30 + k, p.x, p.y + 30 + k);
+  }
+}
+function topMark(doc) {
+  doc.setDrawColor(60); doc.setLineWidth(0.4); doc.line(105, 4, 105, 12); doc.line(105, 4, 102, 7.5); doc.line(105, 4, 108, 7.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110); doc.text('TOP  /  STICKY EDGE UP', 111, 9);
+}
 $('mmGuide').onclick = () => {
   if (!window.jspdf) { $('mmStatus').textContent = 'PDF 도구를 불러오지 못했어요. 앱을 새로고침해 주세요.'; return; }
   const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  // 위쪽 방향 표시 (화살표)
-  doc.setDrawColor(60); doc.setLineWidth(0.4); doc.line(105, 4, 105, 12); doc.line(105, 4, 102, 7.5); doc.line(105, 4, 108, 7.5);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110); doc.text('TOP  /  STICKY EDGE UP', 111, 9);
-  noteSlots(false).forEach((p, i) => {
-    doc.setDrawColor(70); doc.setLineWidth(0.25); doc.rect(p.x, p.y, NOTE, NOTE);
-    // 접착면 표시 (위쪽 띠)
-    doc.setDrawColor(170); doc.setLineWidth(0.15); doc.setLineDashPattern([1, 1], 0); doc.line(p.x, p.y + 15, p.x + NOTE, p.y + 15); doc.setLineDashPattern([], 0);
-    doc.setFontSize(6); doc.setTextColor(150); doc.text('GLUE', p.x + 2, p.y + 13.5);
-    doc.setFontSize(16); doc.setTextColor(200); doc.text(String(i + 1), p.x + NOTE / 2, p.y + NOTE / 2 + 2, { align: 'center' });
-    // 중심 십자선 (어긋남 확인용)
-    doc.setDrawColor(120); doc.setLineWidth(0.15);
-    doc.line(p.x + NOTE / 2 - 4, p.y + NOTE / 2 + 8, p.x + NOTE / 2 + 4, p.y + NOTE / 2 + 8);
-    doc.line(p.x + NOTE / 2, p.y + NOTE / 2 + 4, p.x + NOTE / 2, p.y + NOTE / 2 + 12);
-    // 바깥쪽 눈금 (1mm 간격, 5mm마다 길게) — 메모지 가장자리와 인쇄 위치 차이를 잴 때 사용
-    for (let k = -8; k <= 8; k++) {
-      const L = k % 5 === 0 ? 2.5 : 1.2;
-      doc.line(p.x + 10 + k, p.y - L, p.x + 10 + k, p.y);            // 위쪽 가장자리 가로 눈금
-      doc.line(p.x - L, p.y + 30 + k, p.x, p.y + 30 + k);            // 왼쪽 가장자리 세로 눈금
-    }
-  });
-  doc.setFontSize(7); doc.setTextColor(120);
-  doc.text('Note 76 x 76 mm  |  print at 100% (actual size)', 105, 292, { align: 'center' });
+  topMark(doc); noteSlots(false).forEach((p, i) => guideSlot(doc, p, i));
+  doc.setFontSize(7); doc.setTextColor(120); doc.text('Note 76 x 76 mm  |  print at 100% (actual size)', 105, 292, { align: 'center' });
   savePdf(doc, '메모지_위치가이드_A4.pdf', $('mmStatus'));
 };
 $('mmPrint').onclick = async () => {
   if (!window.jspdf) { $('mmStatus').textContent = 'PDF 도구를 불러오지 못했어요. 앱을 새로고침해 주세요.'; return; }
-  const active = memo.slots.filter((x) => x.tpl !== 'off').length;
-  if (!active) { $('mmStatus').textContent = '인쇄할 칸이 없어요. 한 칸 이상 템플릿을 골라주세요.'; return; }
   $('mmStatus').textContent = 'PDF 만드는 중…'; await ensureFonts();
   const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
-  const pos = noteSlots(true);
+  const pos = noteSlots(true), base = noteSlots(false);
+  const used = memo.slots.filter((x) => x.tpl !== 'off').length, guides = 6 - used;
+  if (guides) topMark(doc);
   memo.slots.forEach((sl, i) => {
-    if (sl.tpl === 'off') return;
-    const c = drawNote(sl, DPMM);
+    if (sl.tpl === 'off') { guideSlot(doc, base[i], i); return; }   // 템플릿 없는 칸: 메모지 붙일 자리 가이드
+    const c = drawNote(sl, DPMM);                                    // 템플릿 칸: 메모지 안 템플릿만
     doc.addImage(c.toDataURL('image/png'), 'PNG', pos[i].x, pos[i].y, NOTE, NOTE, 'note' + i, 'FAST');
-    if (memo.outline) { doc.setDrawColor(185); doc.setLineWidth(0.1); doc.rect(pos[i].x, pos[i].y, NOTE, NOTE); }
   });
-  savePdf(doc, `메모지_${active}칸_${ymd(new Date()).replace(/-/g, '')}.pdf`, $('mmStatus'));
+  const name = used ? `메모지_템플릿${used}칸${guides ? '_가이드' + guides + '칸' : ''}_${ymd(new Date()).replace(/-/g, '')}.pdf` : '메모지_위치가이드_A4.pdf';
+  savePdf(doc, name, $('mmStatus'));
 };
 function openMemo() { $('memoModal').hidden = false; $('mmStatus').textContent = ''; loadSlotForm(); renderMemo(); $('mmClose').focus(); }
 function closeMemo() { $('memoModal').hidden = true; }
