@@ -6,6 +6,7 @@ const CLIENT_ID = (window.APP_CONFIG && window.APP_CONFIG.googleClientId || '').
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -147,6 +148,12 @@ function ensureFolder() {
   });
 }
 async function folderFor(date) {
+  if (date === UNDATED) {
+    if (folderMap[UNDATED]) return folderMap[UNDATED];
+    const root = await ensureFolder();
+    folderMap[UNDATED] = await once('undated', () => findOrCreate('언제의 사진', root, UNDATED, UNDATED)); store.set('pa-folders', folderMap);
+    return folderMap[UNDATED];
+  }
   const y = date.slice(0, 4), ym = date.slice(0, 7);
   if (folderMap[ym]) return folderMap[ym];
   const root = await ensureFolder();
@@ -162,7 +169,8 @@ function fromFile(f) {
   return {
     id: f.id, name: f.name, parent: (f.parents || [])[0] || null, date: a.date || ymd(created), takenAt: a.takenAt || `${ymd(created)}T${hm(created)}`,
     caption: f.description || '', zoom: +a.zoom || 1, cx: a.cx != null ? +a.cx : 0.5, cy: a.cy != null ? +a.cy : 0.5, rot: +a.rot || 0,
-    w: +a.w || im.width || 0, h: +a.h || im.height || 0, sha: a.sha || '', dh: a.dh || ''
+    w: +a.w || im.width || 0, h: +a.h || im.height || 0, sha: a.sha || '', dh: a.dh || '',
+    src: a.src || '', created: ymd(created)
   };
 }
 async function listAll() {
@@ -175,7 +183,8 @@ async function listAll() {
   } while (page);
   return out;
 }
-const datedName = (name, date) => /^\d{4}-\d{2}-\d{2}_/.test(name || '') ? date + name.slice(10) : `${date}_${name || 'photo.jpg'}`;
+const stripDate = (n) => /^\d{4}-\d{2}-\d{2}_/.test(n) ? n.slice(11) : n;
+const datedName = (name, date) => date === UNDATED ? stripDate(name || 'photo.jpg') : `${date}_${stripDate(name || 'photo.jpg')}`;
 async function uploadPhoto(blob, mime, name, props, caption, retried) {
   let parent;
   try { parent = await folderFor(props.date); } catch (e) { if (e instanceof AuthError || retried) throw e; resetFolders(); return uploadPhoto(blob, mime, name, props, caption, true); }
@@ -210,7 +219,7 @@ async function tidyFolders() {
   if (tidying) return; tidying = true;
   try {
     const wrong = [];
-    for (const p of photos) { const t = await folderFor(p.date); if (p.parent !== t || !/^\d{4}-\d{2}-\d{2}_/.test(p.name || '')) wrong.push(p); }
+    for (const p of photos) { const t = await folderFor(p.date); if (p.parent !== t || (p.date !== UNDATED && !/^\d{4}-\d{2}-\d{2}_/.test(p.name || ''))) wrong.push(p); }
     let n = 0;
     for (const p of wrong) {
       n++; note(`드라이브 폴더 정리 중 ${n} / ${wrong.length}`);
@@ -384,15 +393,19 @@ async function addFiles(list) {
   const skipDup = $('optSkipDup').checked;
   if (skipDup && Date.now() - lastSync > 10000) { note('중복 확인을 위해 드라이브 목록을 먼저 확인하는 중…'); await sync(false); }
   uploading = true; const original = $('optOriginal').checked;
-  const inFlight = []; let dup = 0;
+  const inFlight = []; let dup = 0, undatedN = 0;
   let ok = 0, bad = 0, done = 0; const dates = new Set(); let latest = null;
   const queue = files.slice();
   const worker = async () => {
     while (queue.length) {
       const f = queue.shift();
       try {
-        const lm = new Date(f.lastModified || Date.now());
-        const info = (await exifDate(f)) || nameDate(f.name) || { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}` };
+        // 찍은 날짜: 사진 정보(EXIF) → 파일 이름 → 오래된 파일 날짜. 모두 없으면 '언제의 사진?'으로
+        const lm = new Date(f.lastModified || 0);
+        const ex = await exifDate(f), nd = !ex && nameDate(f.name);
+        const lmOk = f.lastModified && Date.now() - f.lastModified > 3600 * 1000;
+        const info = ex ? Object.assign(ex, { src: 'exif' }) : nd ? Object.assign(nd, { src: 'name' })
+          : lmOk ? { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}`, src: 'file' } : { date: UNDATED, at: '', src: 'none' };
         const sha = await shaOf(f);
         const im = await blobToImage(f);
         const dh = dhashOf(im); const fp = { sha, dh, date: info.date };
@@ -406,11 +419,11 @@ async function addFiles(list) {
         const thumb = await toBlob(scaled(im, 400), 'image/jpeg', 0.82);
         URL.revokeObjectURL(im.src);
         const base = (f.name || 'photo').replace(/\.[^.]+$/, '');
-        const p = await uploadPhoto(blob, mime, `${info.date}_${base}.${mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1]}`,
-          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h), sha, dh }, '');
+        const p = await uploadPhoto(blob, mime, datedName(`${base}.${mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1]}`, info.date),
+          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h), sha, dh, src: info.src }, '');
         await IDB.put('thumbs', thumb, p.id).catch(() => {});
         thumbURL.set(p.id, Promise.resolve(URL.createObjectURL(thumb)));
-        photos.push(p); ok++; dates.add(p.date); if (!latest || p.date > latest) latest = p.date;
+        photos.push(p); ok++; if (p.date === UNDATED) undatedN++; else { dates.add(p.date); if (!latest || p.date > latest) latest = p.date; }
       } catch (e) {
         if (e instanceof AuthError) { queue.length = 0; note('구글 연결이 끊겼어요. 다시 연결한 뒤 남은 사진을 추가해 주세요.'); showConnect(); }
         else bad++;
@@ -422,9 +435,10 @@ async function addFiles(list) {
   await Promise.all([worker(), worker(), worker()]);
   uploading = false; savePhotos(); lastSync = Date.now(); setSyncLabel('동기화됨 ' + hm(new Date()));
   if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
+  else if (undatedN) selected = UNDATED;
   render();
-  const extra = (dup ? ` 이미 있는 사진 ${dup}장은 중복이라 뺐어요.` : '') + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
-  if (ok) note(`${ok}장을 ${dates.size}개 날짜에 나눠 넣었어요.` + extra);
+  const extra = (undatedN ? ` 찍은 날짜를 알 수 없는 ${undatedN}장은 ‘언제의 사진?’에 넣었어요.` : '') + (dup ? ` 이미 있는 사진 ${dup}장은 중복이라 뺐어요.` : '') + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
+  if (ok) note((ok - undatedN ? `${ok - undatedN}장을 ${dates.size}개 날짜에 나눠 넣었어요.` : '') + extra);
   else if (dup && !bad) note(`고른 사진 ${dup}장이 모두 이미 보관함에 있어서 새로 올리지 않았어요.`);
   else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.' + (dup ? ` 중복 ${dup}장은 뺐어요.` : ''));
   return ok;
@@ -445,24 +459,27 @@ async function processPending() {
 }
 
 /* ---------------- 다른 날로 옮기기 ---------------- */
-let selectMode = false; const chosen = new Set();
+let selectMode = false; const chosen = new Set(); const candChosen = new Set();
+/* 날짜 정보가 없어 업로드한 날로 들어갔을 수 있는 사진 (이 기능 전에 올린 사진) */
+const suspects = () => photos.filter((p) => !p.src && p.date !== UNDATED && p.date === p.created);
 async function movePhotos(ids, date) {
   ids = ids.filter((id) => { const p = photos.find((x) => x.id === id); return p && p.date !== date; });
-  if (!ids.length || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  if (!ids.length || !(date === UNDATED || /^\d{4}-\d{2}-\d{2}$/.test(date))) return;
   let ok = 0, fail = 0;
   for (const id of ids) {
     const p = photos.find((x) => x.id === id); if (!p) continue;
     note(`사진 옮기는 중 ${ok + fail + 1} / ${ids.length}`);
     try {
       const time = (p.takenAt || '').slice(11) || '12:00';
-      const u = await patchPhoto(p, { date, takenAt: `${date}T${time}` });
+      const u = await patchPhoto(p, { date, takenAt: date === UNDATED ? '' : `${date}T${time}`, src: date === UNDATED ? 'none' : 'user' });
       Object.assign(p, { date: u.date, takenAt: u.takenAt, parent: u.parent, name: u.name }); ok++;
     } catch (e) { if (e instanceof AuthError) { showConnect(); note('구글 연결이 끊겼어요. 다시 연결한 뒤 옮겨주세요.'); break; } fail++; }
   }
-  savePhotos(); chosen.clear(); selectMode = false;
-  selected = date; viewY = +date.slice(0, 4); viewM = +date.slice(5, 7) - 1; render();
-  const d = new Date(date + 'T00:00:00');
-  if (ok) note(`${ok}장을 ${d.getMonth() + 1}월 ${d.getDate()}일로 옮겼어요.` + (fail ? ` ${fail}장은 옮기지 못했어요.` : ''));
+  savePhotos(); chosen.clear(); candChosen.clear(); selectMode = false;
+  const label = date === UNDATED ? '‘언제의 사진?’' : (() => { const d = new Date(date + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일`; })();
+  if (selected !== UNDATED || date !== UNDATED) { selected = date; if (date !== UNDATED) { viewY = +date.slice(0, 4); viewM = +date.slice(5, 7) - 1; } }
+  render();
+  if (ok) note(`${ok}장을 ${label}${date === UNDATED ? '에' : '로'} 옮겼어요.` + (fail ? ` ${fail}장은 옮기지 못했어요.` : ''));
 }
 const canDrag = window.matchMedia('(pointer: fine)').matches;
 
@@ -504,38 +521,49 @@ function renderCal() {
     grid.appendChild(b);
   }
   $('monthSum').textContent = `이번 달 사진 ${count}장`;
+  const und = g[UNDATED] || []; const sus = suspects(); const box = $('undatedBox');
+  box.hidden = !und.length && !sus.length;
+  box.setAttribute('aria-pressed', String(selected === UNDATED));
+  $('undatedCount').textContent = `${und.length}장` + (sus.length ? ` · 확인할 사진 ${sus.length}장` : '');
+  const th = $('undatedThumbs'); th.innerHTML = ''; und.slice(0, 5).forEach((p) => th.appendChild(thumbImg(p)));
 }
 function renderPanel() {
-  const p = $('panel'); p.innerHTML = ''; const list = byDate()[selected] || []; const d = new Date(selected + 'T00:00:00');
+  const p = $('panel'); p.innerHTML = ''; const list = byDate()[selected] || []; const isU = selected === UNDATED;
   const h = document.createElement('div'); h.className = 'ph';
-  h.innerHTML = `<span class="date">${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}</span><span class="wk">${WK[d.getDay()]} · ${d.getFullYear()}</span><span class="cnt num">${list.length}장</span>`;
+  if (isU) h.innerHTML = `<span class="date utitle">언제의 사진?</span><span class="cnt num">${list.length}장</span>`;
+  else { const d = new Date(selected + 'T00:00:00'); h.innerHTML = `<span class="date">${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}</span><span class="wk">${WK[d.getDay()]} · ${d.getFullYear()}</span><span class="cnt num">${list.length}장</span>`; }
   p.appendChild(h);
+  if (isU) { const n = document.createElement('p'); n.className = 'note'; n.textContent = '찍은 날짜를 알 수 없는 사진이에요. 골라서 날짜를 정하면 달력으로 옮겨져요.'; p.appendChild(n); }
   if (!list.length) {
     const e = document.createElement('div'); e.className = 'empty';
     e.textContent = !loaded && Auth.valid() ? '드라이브에서 사진을 불러오는 중…'
+      : isU ? '날짜를 알 수 없는 사진이 없어요.'
       : photos.length ? '이 날에는 사진이 없어요. 달력에서 사진이 있는 날을 눌러보세요.'
       : '아직 저장된 사진이 없어요. ‘사진 추가’로 앨범에서 여러 장을 한 번에 고르면, 사진마다 찍은 날짜를 읽어 달력의 해당 날짜에 넣어드려요. 휴대폰에서는 갤러리에서 사진을 고른 뒤 공유 → 사진 보관함으로 보내도 돼요.';
-    p.appendChild(e); return;
+    p.appendChild(e); if (isU) renderSuspects(p); return;
   }
   const acts = document.createElement('div'); acts.className = 'panelacts';
   const mkBtn = (t, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small' + (cls ? ' ' + cls : ''); b.textContent = t; b.onclick = fn; return b; };
   if (!selectMode) {
     const allIn = list.every((x) => tray[x.id]);
     acts.append(
-      mkBtn(allIn ? '이 날 사진 인쇄 목록에서 빼기' : '이 날 사진 모두 인쇄 목록에 담기', () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }),
-      mkBtn('선택해서 다른 날로 옮기기', () => { selectMode = true; chosen.clear(); renderPanel(); })
+      mkBtn(allIn ? (isU ? '모두 인쇄 목록에서 빼기' : '이 날 사진 인쇄 목록에서 빼기') : (isU ? '모두 인쇄 목록에 담기' : '이 날 사진 모두 인쇄 목록에 담기'), () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }),
+      mkBtn(isU ? '골라서 날짜 정하기' : '선택해서 다른 날로 옮기기', () => { selectMode = true; chosen.clear(); renderPanel(); })
     );
     p.appendChild(acts);
     if (canDrag) { const h2 = document.createElement('p'); h2.className = 'note'; h2.textContent = '사진을 끌어서 달력의 다른 날짜에 놓으면 그 날로 옮겨져요.'; p.appendChild(h2); }
   } else {
     const ids = list.map((x) => x.id); [...chosen].forEach((id) => { if (!ids.includes(id)) chosen.delete(id); });
     const cnt = document.createElement('span'); cnt.className = 'note'; cnt.textContent = `${chosen.size}장 선택`;
-    const di = document.createElement('input'); di.type = 'date'; di.id = 'moveDate'; di.value = selected; di.className = 'datein'; di.setAttribute('aria-label', '옮길 날짜');
-    const go = mkBtn('이 날짜로 옮기기', () => movePhotos([...chosen], di.value), 'primary'); go.disabled = !chosen.size;
+    const di = document.createElement('input'); di.type = 'date'; di.id = 'moveDate'; di.value = isU ? '' : selected; di.className = 'datein'; di.setAttribute('aria-label', '옮길 날짜');
+    const go = mkBtn('이 날짜로 옮기기', () => { if (di.value) movePhotos([...chosen], di.value); }, 'primary'); go.disabled = !chosen.size;
+    di.addEventListener('input', () => { go.disabled = !chosen.size || !di.value; }); if (!di.value) go.disabled = true;
     acts.append(
       mkBtn(chosen.size === list.length ? '선택 해제' : '전체 선택', () => { if (chosen.size === list.length) chosen.clear(); else ids.forEach((id) => chosen.add(id)); renderPanel(); }),
-      cnt, di, go, mkBtn('취소', () => { selectMode = false; chosen.clear(); renderPanel(); })
+      cnt, di, go
     );
+    if (!isU) { const u = mkBtn('언제의 사진?으로', () => movePhotos([...chosen], UNDATED)); u.disabled = !chosen.size; acts.append(u); }
+    acts.append(mkBtn('취소', () => { selectMode = false; chosen.clear(); renderPanel(); }));
     p.appendChild(acts);
   }
   const tiles = document.createElement('div'); tiles.className = 'tiles';
@@ -560,12 +588,47 @@ function renderPanel() {
     tiles.appendChild(f);
   });
   p.appendChild(tiles);
+  if (isU) renderSuspects(p);
+}
+function renderSuspects(p) {
+  const sus = suspects(); if (!sus.length) return;
+  const sec = document.createElement('div'); sec.className = 'suspects';
+  const h = document.createElement('div'); h.className = 'sh';
+  h.innerHTML = `<b>업로드한 날로 들어갔을 수 있는 사진 ${sus.length}장</b><span class="note">이 기능 전에 올린 사진 중 찍은 날짜를 못 읽어 올린 날 칸에 들어갔을 수 있는 사진이에요. 실제로 그날 찍은 사진은 그냥 두세요.</span>`;
+  sec.appendChild(h);
+  const acts = document.createElement('div'); acts.className = 'panelacts';
+  const mk = (t, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small' + (cls ? ' ' + cls : ''); b.textContent = t; b.onclick = fn; return b; };
+  const ids = sus.map((x) => x.id); [...candChosen].forEach((id) => { if (!ids.includes(id)) candChosen.delete(id); });
+  const go = mk(`선택한 ${candChosen.size}장을 언제의 사진?으로`, () => movePhotos([...candChosen], UNDATED), 'primary'); go.disabled = !candChosen.size;
+  const keep = mk('선택한 사진은 날짜가 맞아요', async () => {
+    for (const id of [...candChosen]) { const x = photos.find((q) => q.id === id); if (!x) continue; try { await patchPhoto(x, { src: 'user' }); x.src = 'user'; } catch (e) { if (e instanceof AuthError) break; } }
+    candChosen.clear(); savePhotos(); render();
+  }); keep.disabled = !candChosen.size;
+  acts.append(mk(candChosen.size === sus.length ? '선택 해제' : '전체 선택', () => { if (candChosen.size === sus.length) candChosen.clear(); else ids.forEach((id) => candChosen.add(id)); renderPanel(); }), go, keep);
+  sec.appendChild(acts);
+  const tiles = document.createElement('div'); tiles.className = 'tiles';
+  sus.forEach((x) => {
+    const f = document.createElement('figure'); f.className = 'tile' + (candChosen.has(x.id) ? ' chosen' : '');
+    const o = document.createElement('button'); o.type = 'button'; o.className = 'open'; o.setAttribute('aria-pressed', String(candChosen.has(x.id))); o.setAttribute('aria-label', '사진 선택');
+    o.appendChild(thumbImg(x)); o.onclick = () => { if (candChosen.has(x.id)) candChosen.delete(x.id); else candChosen.add(x.id); renderPanel(); };
+    const ck = document.createElement('span'); ck.className = 'ck'; ck.textContent = candChosen.has(x.id) ? '✓' : '';
+    const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = x.date.slice(5).replace('-', '.') + ' 칸';
+    f.append(o, ck, cap); tiles.appendChild(f);
+  });
+  sec.appendChild(tiles); p.appendChild(sec);
 }
 function updateTrayCount() {
   const ids = new Set(photos.map((p) => p.id)); let n = 0;
   for (const k of Object.keys(tray)) { if (loaded && !ids.has(k)) { delete tray[k]; continue; } n += tray[k]; }
   $('trayCount').textContent = n;
 }
+if (canDrag) {
+  const ub = $('undatedBox');
+  ub.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-pa-ids')) { e.preventDefault(); e.stopPropagation(); ub.classList.add('drop'); } });
+  ub.addEventListener('dragleave', () => ub.classList.remove('drop'));
+  ub.addEventListener('drop', (e) => { const ids = e.dataTransfer.getData('text/x-pa-ids'); if (!ids) return; e.preventDefault(); e.stopPropagation(); ub.classList.remove('drop'); movePhotos(ids.split(','), UNDATED); });
+}
+$('undatedBox').onclick = () => { selected = UNDATED; selectMode = false; render(); if (window.innerWidth <= 820) $('panel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 function shift(dm) { viewM += dm; if (viewM < 0) { viewM = 11; viewY--; } if (viewM > 11) { viewM = 0; viewY++; } renderCal(); }
 $('prevM').onclick = () => shift(-1); $('nextM').onclick = () => shift(1);
 $('todayM').onclick = () => { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); selected = ymd(t); render(); };
@@ -574,7 +637,7 @@ $('todayM').onclick = () => { const t = new Date(); viewY = t.getFullYear(); vie
 let ed = null;
 async function openPhoto(id) {
   const p = photos.find((x) => x.id === id); if (!p) return;
-  $('pmDate').value = p.date; $('pmCaption').value = p.caption || ''; $('pmCopies').value = tray[id] || 0; $('pmStatus').textContent = '';
+  $('pmDate').value = p.date === UNDATED ? '' : p.date; $('pmCaption').value = p.caption || ''; $('pmCopies').value = tray[id] || 0; $('pmStatus').textContent = '';
   $('pmDelete').textContent = '사진 삭제'; $('pmDelete').dataset.armed = '';
   $('cropHint').textContent = `밝은 테두리 안이 ${S.w / 10}×${S.h / 10} cm로 인쇄될 부분이에요. 끌어서 위치를 맞추세요.`;
   $('photoModal').hidden = false; $('pmClose').focus();
@@ -612,14 +675,14 @@ $('pmMinus').onclick = () => { $('pmCopies').value = Math.max(0, copiesVal() - 1
 $('pmPlus').onclick = () => { $('pmCopies').value = Math.min(999, copiesVal() + 1); };
 $('pmSave').onclick = async () => {
   if (!ed) return; const p = photos.find((x) => x.id === ed.id); if (!p) return;
-  const date = $('pmDate').value || p.date; const n = copiesVal();
+  const date = $('pmDate').value || p.date; const n = copiesVal(); const dateChanged = date !== p.date;
   if (n > 0) tray[ed.id] = n; else delete tray[ed.id]; saveTray();
   $('pmSave').disabled = true; $('pmStatus').textContent = '저장 중…';
   try {
-    const upd = await patchPhoto(p, { date, takenAt: date === p.date ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
+    const upd = await patchPhoto(p, { date, takenAt: !dateChanged ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, src: dateChanged ? 'user' : (p.src || ''), zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
     if (ed.rot !== p.rot) { /* 회전이 바뀌면 썸네일은 CSS로 돌려 보여줌 */ }
     Object.assign(p, upd); savePhotos();
-    if (date !== upd.date || date !== selected) { selected = upd.date; viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; }
+    if (dateChanged) { selected = upd.date; if (upd.date !== UNDATED) { viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; } }
     closePhoto(); render();
   } catch (e) {
     $('pmStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겼어요. 위의 연결 버튼을 누른 뒤 다시 저장해 주세요.' : '저장하지 못했어요. 잠시 후 다시 눌러주세요.';
@@ -659,7 +722,7 @@ async function renderPrint() {
   if (!items.length) { const li = document.createElement('li'); li.style.gridTemplateColumns = '1fr'; li.className = 'note'; li.textContent = '담긴 사진이 없어요. 날짜를 눌러 사진의 ‘＋ 인쇄’를 눌러주세요.'; ul.appendChild(li); }
   items.forEach((p) => {
     const li = document.createElement('li'); const im = thumbImg(p);
-    const lb = document.createElement('div'); lb.className = 'lbl'; lb.textContent = `${p.date.replace(/-/g, '.')} ${p.caption || ''}`;
+    const lb = document.createElement('div'); lb.className = 'lbl'; lb.textContent = `${p.date === UNDATED ? '날짜 모름' : p.date.replace(/-/g, '.')} ${p.caption || ''}`;
     const st = document.createElement('div'); st.className = 'stepper';
     const m = document.createElement('button'); m.type = 'button'; m.textContent = '−'; m.setAttribute('aria-label', '매수 줄이기');
     const inp = document.createElement('input'); inp.type = 'number'; inp.min = '1'; inp.max = '999'; inp.value = tray[p.id]; inp.id = 'tc-' + p.id; inp.setAttribute('aria-label', '매수');
