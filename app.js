@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-10'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-11'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -499,15 +499,17 @@ function renderCal() {
   const g = byDate();
   $('mNum').textContent = viewM + 1; $('mYear').textContent = viewY; $('mEn').textContent = MEN[viewM];
   const grid = $('grid'); grid.innerHTML = '';
-  WK.forEach((w, i) => { const d = document.createElement('div'); d.className = 'wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : ''); d.textContent = w; grid.appendChild(d); });
-  const start = new Date(viewY, viewM, 1).getDay(); const n = new Date(viewY, viewM + 1, 0).getDate();
+  // 한 주는 월요일부터 시작: 월 화 수 목 금 토 일
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  order.forEach((wd) => { const d = document.createElement('div'); d.className = 'wd' + (wd === 0 ? ' sun' : wd === 6 ? ' sat' : ''); d.textContent = WK[wd]; grid.appendChild(d); });
+  const start = (new Date(viewY, viewM, 1).getDay() + 6) % 7; const n = new Date(viewY, viewM + 1, 0).getDate();
   const cells = Math.ceil((start + n) / 7) * 7; const today = ymd(new Date()); let count = 0;
   for (let i = 0; i < cells; i++) {
     const dn = i - start + 1; const col = i % 7;
     if (dn < 1 || dn > n) { const e = document.createElement('div'); e.className = 'day out'; grid.appendChild(e); continue; }
     const key = `${viewY}-${String(viewM + 1).padStart(2, '0')}-${String(dn).padStart(2, '0')}`; const list = g[key] || []; count += list.length;
     const b = document.createElement('button'); b.type = 'button';
-    b.className = 'day' + (col === 0 ? ' sun' : col === 6 ? ' sat' : '') + (key === today ? ' today' : '') + (list.length ? ' has' : '');
+    b.className = 'day' + (col === 6 ? ' sun' : col === 5 ? ' sat' : '') + (key === today ? ' today' : '') + (list.length ? ' has' : '');
     b.setAttribute('aria-pressed', String(key === selected)); b.setAttribute('aria-label', `${viewM + 1}월 ${dn}일, 사진 ${list.length}장`);
     const d = document.createElement('span'); d.className = 'd'; d.textContent = dn; b.appendChild(d);
     if (list.length) {
