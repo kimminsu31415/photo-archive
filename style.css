@@ -187,3 +187,6 @@ img{max-width:100%}
 .sharethumbs img{width:56px;height:56px;object-fit:cover;display:block;max-width:none}
 #shareModal .stack .btn{justify-content:center}
 #shareModal .row .datein{flex:1}
+
+.undobar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#pmRestore{align-self:flex-start}

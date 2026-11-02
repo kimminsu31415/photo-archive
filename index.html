@@ -50,6 +50,7 @@
   </section>
 
   <p class="note" id="note" role="status" hidden></p>
+  <div class="undobar" id="undoBar" hidden><span class="note">방금 옮긴 사진을 원래 날짜로 돌릴 수 있어요.</span><button class="btn small" type="button" id="undoBtn">되돌리기</button></div>
 
   <div class="layout">
     <section class="cal" aria-label="월간 달력">
@@ -84,6 +85,7 @@
       </div>
       <div class="stack">
         <label class="field">날짜 (바꾸고 저장하면 그 날로 옮겨져요)<input type="date" id="pmDate"></label>
+        <button class="btn small" type="button" id="pmRestore" hidden></button>
         <label class="field">메모<input type="text" id="pmCaption" maxlength="200" placeholder="예: 졸업식"></label>
         <div class="field">인쇄 매수
           <div class="row">
