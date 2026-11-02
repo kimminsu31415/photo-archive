@@ -108,14 +108,15 @@
       <div class="stack">
         <ul class="tray" id="tray"></ul>
         <div class="presets" id="presets">
+          <button class="btn small" type="button" data-w="34" data-h="31">캘린더형 3.4×3.1 cm</button>
+          <button class="btn small" type="button" data-w="26" data-h="26">리스트형 2.6×2.6 cm</button>
           <button class="btn small" type="button" data-w="30" data-h="20">가로 3×2 cm</button>
           <button class="btn small" type="button" data-w="20" data-h="30">세로 2×3 cm</button>
         </div>
         <div class="grid2">
-          <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="190" value="30"></label>
-          <label class="field">세로 (mm)<input type="number" id="sh" min="5" max="277" value="20"></label>
+          <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="210" step="0.5" value="30"></label>
+          <label class="field">세로 (mm)<input type="number" id="sh" min="5" max="297" step="0.5" value="20"></label>
           <label class="field">간격 (mm)<input type="number" id="sgap" min="0" max="20" step="0.5" value="2"></label>
-          <label class="field">여백 (mm)<input type="number" id="smargin" min="0" max="40" value="10"></label>
         </div>
         <label class="check"><input type="checkbox" id="scut" checked> 재단선 표시</label>
         <p class="note" id="prSummary"></p>

@@ -21,7 +21,8 @@ const store = {
 
 let photos = store.get('pa-photos', []);
 let tray = store.get('pa-tray', {});
-const S = Object.assign({ w: 30, h: 20, gap: 2, margin: 10, cut: true }, store.get('pa-size', {}));
+const S = Object.assign({ w: 30, h: 20, gap: 2, cut: true }, store.get('pa-size', {}));
+S.margin = 0; // 인쇄 여백은 0으로 고정
 const now = new Date();
 let viewY = now.getFullYear(), viewM = now.getMonth(), selected = ymd(now);
 let loaded = photos.length > 0, uploading = false, jumped = false;
@@ -692,15 +693,15 @@ async function renderPrint() {
 }
 function openPrint() {
   $('printModal').hidden = false; $('prStatus').textContent = '';
-  $('sw').value = S.w; $('sh').value = S.h; $('sgap').value = S.gap; $('smargin').value = S.margin; $('scut').checked = S.cut;
+  $('sw').value = S.w; $('sh').value = S.h; $('sgap').value = S.gap; $('scut').checked = S.cut;
   renderPrint(); $('prClose').focus();
 }
 function closePrint() { $('printModal').hidden = true; }
 $('trayBtn').onclick = openPrint; $('prClose').onclick = closePrint;
 $('printModal').addEventListener('click', (e) => { if (e.target === $('printModal')) closePrint(); });
-['sw', 'sh', 'sgap', 'smargin'].forEach((id) => $(id).addEventListener('change', () => {
+['sw', 'sh', 'sgap'].forEach((id) => $(id).addEventListener('change', () => {
   const num = (k, a, b, d) => { const v = parseFloat($(k).value); return isFinite(v) ? Math.max(a, Math.min(b, v)) : d; };
-  S.w = num('sw', 5, 190, 30); S.h = num('sh', 5, 277, 20); S.gap = num('sgap', 0, 20, 2); S.margin = num('smargin', 0, 40, 10); saveSize(); renderPrint();
+  S.w = num('sw', 5, 210, 30); S.h = num('sh', 5, 297, 20); S.gap = num('sgap', 0, 20, 2); saveSize(); renderPrint();
 }));
 $('scut').addEventListener('change', (e) => { S.cut = e.target.checked; saveSize(); renderPrint(); });
 document.querySelectorAll('#presets .btn').forEach((b) => { b.onclick = () => { S.w = +b.dataset.w; S.h = +b.dataset.h; $('sw').value = S.w; $('sh').value = S.h; saveSize(); renderPrint(); }; });
@@ -722,7 +723,9 @@ $('prSave').onclick = async () => {
         if (S.cut) { doc.setDrawColor(185); doc.setLineWidth(0.1); doc.rect(c.x, c.y, S.w, S.h); }
       });
     }
-    const name = `사진_${S.w / 10}x${S.h / 10}cm_${ymd(new Date()).replace(/-/g, '')}.pdf`;
+    const label = (document.querySelector('#presets .btn[aria-pressed="true"]') || {}).textContent || '';
+    const kind = label.startsWith('캘린더형') ? '캘린더형_' : label.startsWith('리스트형') ? '리스트형_' : '';
+    const name = `사진_${kind}${S.w / 10}x${S.h / 10}cm_${ymd(new Date()).replace(/-/g, '')}.pdf`;
     const url = URL.createObjectURL(doc.output('blob'));
     const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
