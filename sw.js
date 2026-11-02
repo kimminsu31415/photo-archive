@@ -1,5 +1,5 @@
 // 사진 보관함 서비스 워커: 앱 화면 캐시 + 갤러리 '공유하기'로 받은 사진 보관
-const VERSION = 'pa-v3';
+const VERSION = 'pa-v4';
 const SHELL = [
   './',
   './index.html',
@@ -62,15 +62,11 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
-  // 화면 파일: 캐시를 먼저 보여주고 뒤에서 새 버전으로 갱신
+  // 화면 파일: 항상 최신 버전을 먼저 받고, 인터넷이 안 될 때만 저장해 둔 화면을 보여줌
   e.respondWith(
-    caches.open(VERSION).then(async (cache) => {
-      const hit = await cache.match(req, { ignoreSearch: true });
-      const net = fetch(req).then((res) => {
-        if (res && res.ok) cache.put(req, res.clone());
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    })
+    fetch(req, { cache: 'no-store' }).then((res) => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(async () => (await caches.match(req, { ignoreSearch: true })) || (await caches.match('./index.html')))
   );
 });

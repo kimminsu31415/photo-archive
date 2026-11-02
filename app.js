@@ -365,7 +365,7 @@ async function addFiles(list) {
     }
   };
   await Promise.all([worker(), worker(), worker()]);
-  uploading = false; savePhotos();
+  uploading = false; savePhotos(); lastSync = Date.now(); setSyncLabel('동기화됨 ' + hm(new Date()));
   if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
   render();
   if (ok) note(`${ok}장을 ${dates.size}개 날짜에 나눠 넣었어요.` + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : ''));
@@ -630,7 +630,7 @@ let installEvt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; $('installBtn').hidden = false; });
 $('installBtn').onclick = async () => { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch (_) {} installEvt = null; $('installBtn').hidden = true; };
 $('refreshBtn').onclick = () => sync(true);
-$('signOutBtn').onclick = () => { Auth.signOut(); photos = []; loaded = false; savePhotos(); render(); showConnect(); note('드라이브 연결을 해제했어요. 드라이브에 저장된 사진은 그대로 남아 있어요.'); };
+$('signOutBtn').onclick = () => { Auth.signOut(); accountEmail = ''; store.del('pa-email'); photos = []; loaded = false; savePhotos(); render(); showConnect(); note('드라이브 연결을 해제했어요. 드라이브에 저장된 사진은 그대로 남아 있어요.'); };
 
 function showConnect() {
   if (!CLIENT_ID) { $('setup').hidden = false; $('connect').hidden = true; $('uploadBtn').hidden = true; return; }
@@ -640,33 +640,64 @@ function showConnect() {
     $('connect').querySelector('h2').textContent = '구글 드라이브 다시 연결';
     $('connectNote').textContent = '보안을 위해 연결은 1시간마다 새로 확인해요. 한 번 누르면 바로 이어져요.';
   }
-  $('driveInfo').textContent = linked ? '구글 드라이브 ‘Photo Archive’ 폴더에 저장하고 있어요.' : '';
+  $('syncBtn').hidden = !CLIENT_ID;
+  $('driveInfo').textContent = linked ? `구글 드라이브 ‘Photo Archive’ 폴더에 저장하고 있어요.${accountEmail ? ' 연결된 계정: ' + accountEmail + ' (휴대폰과 노트북이 같은 계정이어야 사진이 같이 보여요)' : ''}` : '';
 }
 $('connectBtn').onclick = async () => {
   $('connectNote').textContent = '구글 창에서 계정을 고르고 허용을 눌러주세요.';
-  try { await Auth.request(); showConnect(); note(''); await sync(true); await processPending(); }
+  try { await Auth.request(); accountEmail = ''; store.del('pa-email'); showConnect(); note(''); await sync(true); await processPending(); }
   catch (e) { $('connectNote').textContent = e && e.type === 'popup_closed' ? '연결 창이 닫혔어요. 다시 눌러주세요.' : '연결하지 못했어요. 팝업이 막혀 있다면 허용한 뒤 다시 눌러주세요.'; }
 };
 
+let syncing = false, lastSync = 0, accountEmail = store.get('pa-email', '');
+function setSyncLabel(text) { $('syncLabel').textContent = text; }
+async function loadAccount() {
+  try {
+    const r = await api(`${API}/about?fields=user(emailAddress)`); const j = await r.json();
+    accountEmail = (j.user && j.user.emailAddress) || ''; store.set('pa-email', accountEmail); showConnect();
+  } catch (_) {}
+}
+const sig = (list) => list.map((p) => [p.id, p.date, p.caption, p.rot, p.zoom, p.cx, p.cy, p.parent].join('|')).sort().join('#');
 async function sync(force) {
-  if (!Auth.valid()) { showConnect(); return; }
+  if (!Auth.valid()) { showConnect(); setSyncLabel('연결 필요'); return; }
+  if (syncing || uploading) return;
+  syncing = true; setSyncLabel('동기화 중…');
   if (force) note('드라이브에서 사진 목록을 가져오는 중…');
   try {
-    photos = await listAll(); loaded = true; savePhotos();
+    const fresh = await listAll();
+    const changed = sig(fresh) !== sig(photos) || !loaded;
+    const added = fresh.filter((p) => !photos.some((x) => x.id === p.id)).length;
+    photos = fresh; loaded = true; savePhotos(); lastSync = Date.now();
     if (!jumped && photos.length) {
       jumped = true; const mk = `${viewY}-${String(viewM + 1).padStart(2, '0')}`;
       if (!photos.some((p) => p.date.startsWith(mk))) { const last = photos.map((p) => p.date).sort().pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
     }
-    render(); if (force) note('');
+    if (changed && $('photoModal').hidden) render(); else updateTrayCount();
+    if (force) note('');
+    else if (added && changed && document.visibilityState === 'visible') note(`다른 기기에서 추가한 사진 ${added}장을 가져왔어요.`);
+    setSyncLabel('동기화됨 ' + hm(new Date()));
+    if (!accountEmail) loadAccount();
     await tidyFolders();
   } catch (e) {
-    if (e instanceof AuthError) { showConnect(); note(''); }
-    else note('드라이브에서 사진을 가져오지 못했어요. 인터넷 연결을 확인하고 설정 → 드라이브에서 새로고침을 눌러주세요.');
-  }
+    if (e instanceof AuthError) { showConnect(); note(''); setSyncLabel('연결 필요'); }
+    else { setSyncLabel('동기화 실패'); if (force) note('드라이브에서 사진을 가져오지 못했어요. 인터넷 연결을 확인하고 ↻ 동기화를 눌러주세요.'); }
+  } finally { syncing = false; }
 }
+$('syncBtn').onclick = async () => {
+  if (!Auth.valid()) { try { await Auth.request(); showConnect(); } catch (_) { return; } }
+  sync(true);
+};
+// 다른 기기에서 올린 사진이 자동으로 따라오게: 화면으로 돌아올 때 + 보고 있는 동안 40초마다
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastSync > 10000) sync(false); });
+window.addEventListener('focus', () => { if (Date.now() - lastSync > 10000) sync(false); });
+setInterval(() => { if (document.visibilityState === 'visible' && Auth.valid()) sync(false); }, 40000);
 
 /* ---------------- 시작 ---------------- */
-if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(() => {}); }
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+}
 Auth.restore();
 render();
 showConnect();
