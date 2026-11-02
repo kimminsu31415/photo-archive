@@ -2,5 +2,5 @@
 // 예: '1234567890-abcdefg.apps.googleusercontent.com'
 // 이 값은 공개되어도 괜찮은 값입니다(비밀번호가 아님).
 window.APP_CONFIG = {
-  googleClientId: ''
+  googleClientId: '400029139757-8hchnfqpnerlevjbb0j0hllera42evs8.apps.googleusercontent.com'
 };
