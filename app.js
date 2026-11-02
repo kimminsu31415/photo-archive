@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-15'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-16'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -330,15 +330,18 @@ function parseTiff(v, t) {
   const ifd = (off) => { const n = g16(t + off); const tags = {}; for (let i = 0; i < n; i++) { const e = t + off + 2 + i * 12; tags[g16(e)] = { count: g32(e + 4), val: e + 8 }; } return tags; };
   const str = (tag) => { if (!tag) return null; const p = tag.count > 4 ? t + g32(tag.val) : tag.val; let s = ''; for (let i = 0; i < tag.count - 1 && p + i < v.byteLength; i++) s += String.fromCharCode(v.getUint8(p + i)); return s; };
   const i0 = ifd(g32(t + 4)); let s = null;
-  if (i0[0x8769]) { const ex = ifd(g32(i0[0x8769].val)); s = str(ex[0x9003]) || str(ex[0x9004]); }
+  let sub = '';
+  if (i0[0x8769]) { const ex = ifd(g32(i0[0x8769].val)); s = str(ex[0x9003]) || str(ex[0x9004]); sub = (str(ex[0x9291]) || '').trim(); }
   s = s || str(i0[0x0132]);
-  const m = s && s.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2})/); if (!m || m[1] === '0000') return null;
-  return { date: `${m[1]}-${m[2]}-${m[3]}`, at: `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}` };
+  const m = s && s.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):?(\d{2})?/); if (!m || m[1] === '0000') return null;
+  // 초까지, 연속 촬영용 1초 미만 값(SubSecTimeOriginal)이 있으면 그것까지
+  const sec = m[6] ? `:${m[6]}` + (/^\d+$/.test(sub) ? `.${sub}` : '') : '';
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, at: `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}${sec}`, real: true };
 }
 function nameDate(name) {
-  const m = (name || '').match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(?:[-_ ]?(\d{2})(\d{2}))?/);
+  const m = (name || '').match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(?:[-_ ]?(\d{2})(\d{2})(\d{2})?)?/);
   if (!m) return null; const mo = +m[2], d = +m[3]; if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  return { date: `${m[1]}-${m[2]}-${m[3]}`, at: `${m[1]}-${m[2]}-${m[3]}T${m[4] || '12'}:${m[5] || '00'}` };
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, at: `${m[1]}-${m[2]}-${m[3]}T${m[4] || '12'}:${m[5] || '00'}${m[6] ? ':' + m[6] : ''}`, real: !!m[4] };
 }
 
 /* ---------------- 중복 판별용 지문 ---------------- */
@@ -369,14 +372,17 @@ function hamming(a, b) {
   for (let i = 0; i < a.length; i++) { let x = parseInt(a[i], 16) ^ parseInt(b[i], 16); while (x) { n += x & 1; x >>= 1; } }
   return n;
 }
-/* 같은 사진인지: ① 파일이 똑같거나 ② 모양 지문이 거의 같고 사진에 적힌 찍은 시각(분)까지 같을 때 */
+/* 같은 사진인지: ① 파일이 똑같거나 ② 모양 지문이 거의 같고 사진에 적힌 찍은 시각(초, 연속 촬영은 1초 미만까지)이 같을 때 */
 function findDup(fp, pool) {
   return pool.find((p) => {
     if (fp.sha && p.sha && p.sha === fp.sha) return true;
     // 파일이 다르면: 모양 지문이 거의 같고, 사진에 원래 적힌 찍은 시각(분)까지 같을 때만 같은 사진
     // (찍은 시각이 없는 사진은 모양만으로 판단하지 않는다 — 어두운 사진·스크린샷끼리 잘못 묶이는 것을 막기 위해)
     if (!fp.dh || !p.dh || !fp.ot || !p.ot || /^(0+|f+)$/.test(fp.dh) || /^(0+|f+)$/.test(p.dh)) return false;
-    return fp.ot === p.ot && hamming(fp.dh, p.dh) <= 4;
+    // 두 시각 중 더 짧은 정밀도까지 같아야 한다. 초 이하까지 비교할 수 있으면 지문 차이 4까지, 분까지만이면 2까지 허용
+    const n = Math.min(fp.ot.length, p.ot.length);
+    if (n < 16 || fp.ot.slice(0, n) !== p.ot.slice(0, n)) return false;
+    return hamming(fp.dh, p.dh) <= (n >= 19 ? 4 : 2);
   });
 }
 const dayLabel = (date) => date === UNDATED ? '‘언제의 사진?’' : (() => { const d = new Date(date + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일`; })();
@@ -420,7 +426,7 @@ async function addFiles(list, forceDate) {
           : lmOk ? { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}`, src: 'file' } : { date: UNDATED, at: '', src: 'none' };
         const sha = await shaOf(f);
         const im = await blobToImage(f);
-        const dh = dhashOf(im); const ot = (ex || nd) ? (ex || nd).at : '';
+        const dh = dhashOf(im); const ot = (ex || nd) && (ex || nd).real ? (ex || nd).at : '';
         const fp = { sha, dh, date: info.date, ot, ar: dims(im)[0] / dims(im)[1] };
         const same = skipDup && findDup(fp, photos.concat(inFlight));
         if (same) {
