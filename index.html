@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>사진 보관함</title>
+<meta name="description" content="촬영 날짜별 달력으로 사진을 모아 보고, 3×2cm로 A4에 인쇄하는 사진 보관함">
+<meta name="theme-color" content="#f2f1ed" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1b1b1a" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>PHOTO ARCHIVE · 사진 보관함</h1>
+    <label class="btn primary upload" id="uploadBtn" hidden>＋ 사진 추가<input type="file" id="file" accept="image/*" multiple aria-label="사진 추가"></label>
+    <button class="btn" id="trayBtn" type="button">인쇄 목록 <span class="badge" id="trayCount">0</span></button>
+    <button class="btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="menu">설정</button>
+  </header>
+
+  <div class="menu" id="menu" hidden>
+    <label class="check"><input type="checkbox" id="optOriginal"> 원본 화질로 저장 (끄면 긴 변 2000px로 줄여 저장해 용량을 아껴요)</label>
+    <div class="row">
+      <button class="btn small" type="button" id="installBtn" hidden>홈 화면에 설치</button>
+      <button class="btn small" type="button" id="refreshBtn">드라이브에서 새로고침</button>
+      <button class="btn small" type="button" id="signOutBtn">드라이브 연결 해제</button>
+    </div>
+    <p class="note" id="driveInfo"></p>
+  </div>
+
+  <section class="banner" id="setup" hidden>
+    <h2>구글 로그인 키가 아직 없어요</h2>
+    <p>사진은 내 구글 드라이브에 저장돼요. 저장소의 <code>config.js</code>에 구글 클라우드 콘솔에서 만든 OAuth 클라이언트 ID를 넣으면 바로 쓸 수 있어요. 방법은 저장소의 README에 있어요.</p>
+  </section>
+
+  <section class="banner" id="connect" hidden>
+    <h2>구글 드라이브 연결</h2>
+    <p>사진은 내 구글 드라이브의 ‘Photo Archive’ 폴더에 저장돼요. 이 앱은 자기가 만든 사진만 볼 수 있고, 드라이브의 다른 파일에는 접근하지 않아요.</p>
+    <div class="row"><button class="btn primary" type="button" id="connectBtn">구글 계정으로 연결</button><span class="note" id="connectNote"></span></div>
+  </section>
+
+  <p class="note" id="note" role="status" hidden></p>
+
+  <div class="layout">
+    <section class="cal" aria-label="월간 달력">
+      <div class="calhead">
+        <div class="mnum" id="mNum"></div>
+        <div class="myear"><span class="y" id="mYear"></span><span class="en" id="mEn"></span></div>
+        <div class="mnav">
+          <button class="btn" type="button" id="prevM" aria-label="이전 달">‹</button>
+          <button class="btn" type="button" id="todayM">오늘</button>
+          <button class="btn" type="button" id="nextM" aria-label="다음 달">›</button>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="calfoot"><span id="monthSum"></span><span>여러 장을 한 번에 고르면 촬영 날짜 칸에 자동으로 들어가요</span></div>
+    </section>
+    <section class="panel" id="panel" aria-label="선택한 날짜의 사진"></section>
+  </div>
+</div>
+
+<!-- 사진 편집 -->
+<div class="modal" id="photoModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
+    <div class="head"><h2 id="pmTitle">사진 편집</h2><button class="btn small" type="button" id="pmClose">닫기</button></div>
+    <div class="cols">
+      <div class="stack">
+        <div class="cropbox" id="cropbox"><canvas id="cropCanvas" width="360" height="240"></canvas></div>
+        <p class="note" id="cropHint"></p>
+        <div class="row"><span class="note">확대</span><input type="range" id="zoom" min="1" max="4" step="0.01" value="1" aria-label="확대"></div>
+        <div class="row">
+          <button class="btn small" type="button" id="rotL">↺ 회전</button>
+          <button class="btn small" type="button" id="rotR">↻ 회전</button>
+          <button class="btn small" type="button" id="recenter">가운데로</button>
+        </div>
+      </div>
+      <div class="stack">
+        <label class="field">날짜<input type="date" id="pmDate"></label>
+        <label class="field">메모<input type="text" id="pmCaption" maxlength="200" placeholder="예: 졸업식"></label>
+        <div class="field">인쇄 매수
+          <div class="row">
+            <div class="stepper"><button type="button" id="pmMinus" aria-label="매수 줄이기">−</button><input type="number" id="pmCopies" min="0" max="999" value="0" aria-label="인쇄 매수"><button type="button" id="pmPlus" aria-label="매수 늘리기">+</button></div>
+            <span class="note">0이면 인쇄 목록에서 빠져요</span>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="button" id="pmSave">저장</button>
+          <button class="btn danger" type="button" id="pmDelete">사진 삭제</button>
+        </div>
+        <div class="status" id="pmStatus" role="status"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 인쇄 -->
+<div class="modal" id="printModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="prTitle">
+    <div class="head"><h2 id="prTitle">인쇄 목록 · A4</h2><button class="btn small" type="button" id="prClose">닫기</button></div>
+    <div class="cols">
+      <div class="stack">
+        <ul class="tray" id="tray"></ul>
+        <div class="presets" id="presets">
+          <button class="btn small" type="button" data-w="30" data-h="20">가로 3×2 cm</button>
+          <button class="btn small" type="button" data-w="20" data-h="30">세로 2×3 cm</button>
+        </div>
+        <div class="grid2">
+          <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="190" value="30"></label>
+          <label class="field">세로 (mm)<input type="number" id="sh" min="5" max="277" value="20"></label>
+          <label class="field">간격 (mm)<input type="number" id="sgap" min="0" max="20" step="0.5" value="2"></label>
+          <label class="field">여백 (mm)<input type="number" id="smargin" min="0" max="40" value="10"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="scut" checked> 재단선 표시</label>
+        <p class="note" id="prSummary"></p>
+        <div class="row"><button class="btn primary" type="button" id="prSave">PDF 저장</button><button class="btn" type="button" id="prClear">목록 비우기</button></div>
+        <div class="status" id="prStatus" role="status"></div>
+        <p class="note">인쇄할 때 크기 조정 없이 <b>실제 크기(100%)</b>로 출력해야 정확한 크기가 나와요.</p>
+      </div>
+      <div class="pages" id="prPages"></div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="vendor/jspdf.umd.min.js" defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>

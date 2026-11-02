@@ -1,0 +1,24 @@
+{
+  "name": "사진 보관함",
+  "short_name": "사진 보관함",
+  "description": "촬영 날짜별 달력으로 사진을 모아 보고, 3×2cm로 A4에 인쇄하는 사진 보관함",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f1ed",
+  "theme_color": "#f2f1ed",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [ { "name": "photos", "accept": ["image/*"] } ]
+    }
+  }
+}
