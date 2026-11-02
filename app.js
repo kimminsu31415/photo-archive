@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-12'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-13'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -458,10 +458,22 @@ async function processPending() {
   const items = await IDB.all('pending').catch(() => []);
   if (!items.length) return;
   if (!Auth.valid()) { note(`공유받은 사진 ${items.length}장이 기다리고 있어요. 구글 드라이브를 연결하면 바로 올라가요.`); showConnect(); return; }
+  // 갤러리 앱에서 공유한 사진: 찍은 날짜대로 넣을지, 날짜를 정해 넣을지 고른다
   const files = items.map((x) => x.value);
-  const n = await addFiles(files);
-  if (n || files.length) await Promise.all(items.map((x) => IDB.del('pending', x.key))).catch(() => {});
+  $('shInfo').textContent = `갤러리에서 보낸 사진 ${files.length}장이에요. 어떻게 넣을까요?`;
+  $('shDate').value = selected !== UNDATED ? selected : ymd(new Date());
+  const th = $('shThumbs'); th.innerHTML = '';
+  files.slice(0, 8).forEach((f) => { const im = document.createElement('img'); im.alt = ''; im.src = URL.createObjectURL(f); th.appendChild(im); });
+  $('shareModal').hidden = false; $('shAuto').focus();
+  const clear = () => Promise.all(items.map((x) => IDB.del('pending', x.key))).catch(() => {});
+  const done = () => { $('shareModal').hidden = true; th.querySelectorAll('img').forEach((i) => URL.revokeObjectURL(i.src)); };
+  $('shAuto').onclick = async () => { done(); await addFiles(files); await clear(); };
+  $('shDay').onclick = async () => { const d = $('shDate').value; if (!d) return; done(); await addFiles(files, d); await clear(); };
+  $('shDrop').onclick = async () => { done(); await clear(); note('공유받은 사진을 올리지 않았어요.'); };
 }
+/* 사진 고르는 화면: 기본은 휴대폰 사진 선택기, 설정을 켜면 갤러리·파일 앱 화면 */
+const GALLERY_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif';
+const pickerAccept = () => (store.get('pa-gallery', false) ? GALLERY_ACCEPT : 'image/*');
 
 /* ---------------- 다른 날로 옮기기 ---------------- */
 let selectMode = false; const chosen = new Set(); const candChosen = new Set();
@@ -547,7 +559,7 @@ function renderPanel() {
     // 이 날에 사진 추가: 갤러리에서 고른 사진을 찍은 날짜와 상관없이 이 날짜에 넣는다
     const date = selected; const lab = document.createElement('label'); lab.className = 'btn small upload addday';
     lab.textContent = '＋ 이 날에 사진 추가';
-    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.id = 'dayFile'; inp.setAttribute('aria-label', '이 날에 사진 추가');
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = pickerAccept(); inp.multiple = true; inp.id = 'dayFile'; inp.setAttribute('aria-label', '이 날에 사진 추가');
     inp.addEventListener('change', () => { const fs = [...inp.files]; inp.value = ''; addFiles(fs, date); });
     lab.appendChild(inp); const row = document.createElement('div'); row.className = 'panelacts'; row.appendChild(lab); p.appendChild(row);
   }
@@ -1032,6 +1044,8 @@ $('memoModal').addEventListener('click', (e) => { if (e.target === $('memoModal'
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('memoModal').hidden) closeMemo(); });
 
 /* ---------------- 메뉴 · 설치 · 연결 ---------------- */
+$('optGallery').checked = !!store.get('pa-gallery', false); $('file').accept = pickerAccept();
+$('optGallery').addEventListener('change', (e) => { store.set('pa-gallery', e.target.checked); $('file').accept = pickerAccept(); renderPanel(); });
 $('optOriginal').checked = !!store.get('pa-original', false);
 $('optOriginal').addEventListener('change', (e) => store.set('pa-original', e.target.checked));
 $('appVersion').textContent = `앱 버전 ${APP_VERSION}`;
