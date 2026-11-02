@@ -133,3 +133,10 @@ img{max-width:100%}
 .banner code{font-family:var(--mono);font-size:.82rem}
 .progress{height:3px;background:var(--rule);overflow:hidden}
 .progress span{display:block;height:100%;background:var(--ink);transition:width .2s}
+
+.day.drop{box-shadow:inset 0 0 0 2px var(--sun)}
+.tile.chosen .open{outline:3px solid var(--ink);outline-offset:-3px}
+.tile .ck{position:absolute;top:5px;right:5px;width:24px;height:24px;border:1px solid var(--rule-strong);background:var(--paper);display:flex;align-items:center;justify-content:center;font-size:.85rem;pointer-events:none}
+.tile.chosen .ck{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.datein{border:1px solid var(--rule-strong);border-radius:2px;padding:4px 8px;min-height:32px;background:var(--paper);color:var(--ink);font-family:var(--mono);font-size:.8rem}
+.tile .open[draggable="true"]{cursor:grab}

@@ -161,7 +161,7 @@ function fromFile(f) {
   return {
     id: f.id, name: f.name, parent: (f.parents || [])[0] || null, date: a.date || ymd(created), takenAt: a.takenAt || `${ymd(created)}T${hm(created)}`,
     caption: f.description || '', zoom: +a.zoom || 1, cx: a.cx != null ? +a.cx : 0.5, cy: a.cy != null ? +a.cy : 0.5, rot: +a.rot || 0,
-    w: +a.w || im.width || 0, h: +a.h || im.height || 0
+    w: +a.w || im.width || 0, h: +a.h || im.height || 0, sha: a.sha || '', dh: a.dh || ''
   };
 }
 async function listAll() {
@@ -327,13 +327,63 @@ function nameDate(name) {
   return { date: `${m[1]}-${m[2]}-${m[3]}`, at: `${m[1]}-${m[2]}-${m[3]}T${m[4] || '12'}:${m[5] || '00'}` };
 }
 
+/* ---------------- 중복 판별용 지문 ---------------- */
+async function shaOf(file) {
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return [...new Uint8Array(buf)].slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) { return ''; }
+}
+function dhashOf(src) {
+  // 9×8 흑백으로 줄여 옆 칸과 밝기를 비교한 64비트 지문. 크기·압축이 달라도 같은 사진이면 거의 같다.
+  const c = document.createElement('canvas'); c.width = 9; c.height = 8; const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0, 9, 8);
+  const d = g.getImageData(0, 0, 9, 8).data; const lum = (i) => d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+  let hex = '';
+  for (let y = 0; y < 8; y++) {
+    let nib = 0, bits = 0, row = '';
+    for (let x = 0; x < 8; x++) {
+      const i = (y * 9 + x) * 4; nib = (nib << 1) | (lum(i) > lum(i + 4) ? 1 : 0); bits++;
+      if (bits === 4) { row += nib.toString(16); nib = 0; bits = 0; }
+    }
+    hex += row;
+  }
+  return hex;
+}
+function hamming(a, b) {
+  if (!a || !b || a.length !== b.length) return 99; let n = 0;
+  for (let i = 0; i < a.length; i++) { let x = parseInt(a[i], 16) ^ parseInt(b[i], 16); while (x) { n += x & 1; x >>= 1; } }
+  return n;
+}
+function findDup(fp, pool) {
+  return pool.find((p) => (fp.sha && p.sha && p.sha === fp.sha) ||
+    (fp.dh && p.dh && (() => { const d = hamming(fp.dh, p.dh); return d === 0 || (d <= 3 && p.date === fp.date); })()));
+}
+/* 예전에 올려 지문이 없는 사진은 썸네일로 지문을 만들어 채운다 (중복 판별용) */
+let backfilling = false;
+async function backfillPrints() {
+  if (backfilling) return; backfilling = true;
+  try {
+    for (const p of photos.filter((x) => !x.dh)) {
+      try {
+        const u = await getThumb(p.id); const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = u; });
+        const dh = dhashOf(im); await patchPhoto(p, { dh }); p.dh = dh;
+      } catch (e) { if (e instanceof AuthError) break; }
+    }
+    savePhotos();
+  } finally { backfilling = false; }
+}
+
 /* ---------------- 사진 추가 (한 번에 여러 장 → 날짜별 자동 분류) ---------------- */
 async function addFiles(list) {
   const files = [...(list || [])].filter((f) => f && (!f.type || f.type.startsWith('image/')));
   if (!files.length) return 0;
   if (uploading) { note('지금 다른 사진을 올리는 중이에요. 끝난 뒤 다시 추가해 주세요.'); return 0; }
   if (!Auth.valid()) { try { await Auth.request(); } catch (_) { note('구글 드라이브에 연결해야 사진을 저장할 수 있어요.'); showConnect(); return 0; } }
+  const skipDup = $('optSkipDup').checked;
+  if (skipDup && Date.now() - lastSync > 10000) { note('중복 확인을 위해 드라이브 목록을 먼저 확인하는 중…'); await sync(false); }
   uploading = true; const original = $('optOriginal').checked;
+  const inFlight = []; let dup = 0;
   let ok = 0, bad = 0, done = 0; const dates = new Set(); let latest = null;
   const queue = files.slice();
   const worker = async () => {
@@ -342,7 +392,11 @@ async function addFiles(list) {
       try {
         const lm = new Date(f.lastModified || Date.now());
         const info = (await exifDate(f)) || nameDate(f.name) || { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}` };
+        const sha = await shaOf(f);
         const im = await blobToImage(f);
+        const dh = dhashOf(im); const fp = { sha, dh, date: info.date };
+        if (skipDup && findDup(fp, photos.concat(inFlight))) { URL.revokeObjectURL(im.src); dup++; done++; note(`사진 올리는 중 ${done} / ${files.length}`); continue; }
+        inFlight.push(fp);
         const [w0, h0] = dims(im);
         let blob = f, mime = f.type || 'image/jpeg', w = w0, h = h0;
         if (!original || !/^image\/(jpeg|png|webp)$/.test(mime)) {
@@ -352,7 +406,7 @@ async function addFiles(list) {
         URL.revokeObjectURL(im.src);
         const base = (f.name || 'photo').replace(/\.[^.]+$/, '');
         const p = await uploadPhoto(blob, mime, `${info.date}_${base}.${mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1]}`,
-          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h) }, '');
+          { date: info.date, takenAt: info.at, zoom: '1', cx: '0.5', cy: '0.5', rot: '0', w: String(w), h: String(h), sha, dh }, '');
         await IDB.put('thumbs', thumb, p.id).catch(() => {});
         thumbURL.set(p.id, Promise.resolve(URL.createObjectURL(thumb)));
         photos.push(p); ok++; dates.add(p.date); if (!latest || p.date > latest) latest = p.date;
@@ -368,14 +422,16 @@ async function addFiles(list) {
   uploading = false; savePhotos(); lastSync = Date.now(); setSyncLabel('동기화됨 ' + hm(new Date()));
   if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
   render();
-  if (ok) note(`${ok}장을 ${dates.size}개 날짜에 나눠 넣었어요.` + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : ''));
-  else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.');
+  const extra = (dup ? ` 이미 있는 사진 ${dup}장은 중복이라 뺐어요.` : '') + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
+  if (ok) note(`${ok}장을 ${dates.size}개 날짜에 나눠 넣었어요.` + extra);
+  else if (dup && !bad) note(`고른 사진 ${dup}장이 모두 이미 보관함에 있어서 새로 올리지 않았어요.`);
+  else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.' + (dup ? ` 중복 ${dup}장은 뺐어요.` : ''));
   return ok;
 }
 const fileInput = $('file');
 fileInput.addEventListener('change', () => { addFiles(fileInput.files).finally(() => { fileInput.value = ''; }); });
 document.addEventListener('dragover', (e) => e.preventDefault());
-document.addEventListener('drop', (e) => { e.preventDefault(); addFiles(e.dataTransfer && e.dataTransfer.files); });
+document.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
 
 /* 갤러리 앱의 '공유하기'로 받은 사진 */
 async function processPending() {
@@ -386,6 +442,28 @@ async function processPending() {
   const n = await addFiles(files);
   if (n || files.length) await Promise.all(items.map((x) => IDB.del('pending', x.key))).catch(() => {});
 }
+
+/* ---------------- 다른 날로 옮기기 ---------------- */
+let selectMode = false; const chosen = new Set();
+async function movePhotos(ids, date) {
+  ids = ids.filter((id) => { const p = photos.find((x) => x.id === id); return p && p.date !== date; });
+  if (!ids.length || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    const p = photos.find((x) => x.id === id); if (!p) continue;
+    note(`사진 옮기는 중 ${ok + fail + 1} / ${ids.length}`);
+    try {
+      const time = (p.takenAt || '').slice(11) || '12:00';
+      const u = await patchPhoto(p, { date, takenAt: `${date}T${time}` });
+      Object.assign(p, { date: u.date, takenAt: u.takenAt, parent: u.parent, name: u.name }); ok++;
+    } catch (e) { if (e instanceof AuthError) { showConnect(); note('구글 연결이 끊겼어요. 다시 연결한 뒤 옮겨주세요.'); break; } fail++; }
+  }
+  savePhotos(); chosen.clear(); selectMode = false;
+  selected = date; viewY = +date.slice(0, 4); viewM = +date.slice(5, 7) - 1; render();
+  const d = new Date(date + 'T00:00:00');
+  if (ok) note(`${ok}장을 ${d.getMonth() + 1}월 ${d.getDate()}일로 옮겼어요.` + (fail ? ` ${fail}장은 옮기지 못했어요.` : ''));
+}
+const canDrag = window.matchMedia('(pointer: fine)').matches;
 
 /* ---------------- 달력 ---------------- */
 function byDate() {
@@ -413,6 +491,14 @@ function renderCal() {
       const th = document.createElement('span'); th.className = 'th'; th.appendChild(thumbImg(list[0])); b.appendChild(th);
       const c = document.createElement('span'); c.className = 'c'; c.textContent = list.length; b.appendChild(c);
     }
+    if (canDrag) {
+      b.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-pa-ids')) { e.preventDefault(); e.stopPropagation(); b.classList.add('drop'); } });
+      b.addEventListener('dragleave', () => b.classList.remove('drop'));
+      b.addEventListener('drop', (e) => {
+        const ids = e.dataTransfer.getData('text/x-pa-ids'); if (!ids) return;
+        e.preventDefault(); e.stopPropagation(); b.classList.remove('drop'); movePhotos(ids.split(','), key);
+      });
+    }
     b.onclick = () => { selected = key; render(); if (window.innerWidth <= 820) $('panel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     grid.appendChild(b);
   }
@@ -431,21 +517,46 @@ function renderPanel() {
     p.appendChild(e); return;
   }
   const acts = document.createElement('div'); acts.className = 'panelacts';
-  const all = document.createElement('button'); all.type = 'button'; all.className = 'btn small';
-  const allIn = list.every((x) => tray[x.id]);
-  all.textContent = allIn ? '이 날 사진 인쇄 목록에서 빼기' : '이 날 사진 모두 인쇄 목록에 담기';
-  all.onclick = () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); };
-  acts.appendChild(all); p.appendChild(acts);
+  const mkBtn = (t, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small' + (cls ? ' ' + cls : ''); b.textContent = t; b.onclick = fn; return b; };
+  if (!selectMode) {
+    const allIn = list.every((x) => tray[x.id]);
+    acts.append(
+      mkBtn(allIn ? '이 날 사진 인쇄 목록에서 빼기' : '이 날 사진 모두 인쇄 목록에 담기', () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }),
+      mkBtn('선택해서 다른 날로 옮기기', () => { selectMode = true; chosen.clear(); renderPanel(); })
+    );
+    p.appendChild(acts);
+    if (canDrag) { const h2 = document.createElement('p'); h2.className = 'note'; h2.textContent = '사진을 끌어서 달력의 다른 날짜에 놓으면 그 날로 옮겨져요.'; p.appendChild(h2); }
+  } else {
+    const ids = list.map((x) => x.id); [...chosen].forEach((id) => { if (!ids.includes(id)) chosen.delete(id); });
+    const cnt = document.createElement('span'); cnt.className = 'note'; cnt.textContent = `${chosen.size}장 선택`;
+    const di = document.createElement('input'); di.type = 'date'; di.id = 'moveDate'; di.value = selected; di.className = 'datein'; di.setAttribute('aria-label', '옮길 날짜');
+    const go = mkBtn('이 날짜로 옮기기', () => movePhotos([...chosen], di.value), 'primary'); go.disabled = !chosen.size;
+    acts.append(
+      mkBtn(chosen.size === list.length ? '선택 해제' : '전체 선택', () => { if (chosen.size === list.length) chosen.clear(); else ids.forEach((id) => chosen.add(id)); renderPanel(); }),
+      cnt, di, go, mkBtn('취소', () => { selectMode = false; chosen.clear(); renderPanel(); })
+    );
+    p.appendChild(acts);
+  }
   const tiles = document.createElement('div'); tiles.className = 'tiles';
   list.forEach((x) => {
     const f = document.createElement('figure'); f.className = 'tile';
     const o = document.createElement('button'); o.type = 'button'; o.className = 'open'; o.setAttribute('aria-label', (x.caption || '사진') + ' 편집');
-    o.appendChild(thumbImg(x)); o.onclick = () => openPhoto(x.id);
+    o.appendChild(thumbImg(x));
+    if (selectMode) {
+      f.classList.toggle('chosen', chosen.has(x.id)); o.setAttribute('aria-pressed', String(chosen.has(x.id)));
+      o.onclick = () => { if (chosen.has(x.id)) chosen.delete(x.id); else chosen.add(x.id); renderPanel(); };
+    } else o.onclick = () => openPhoto(x.id);
+    if (canDrag && !selectMode) {
+      o.draggable = true;
+      o.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-pa-ids', x.id); e.dataTransfer.effectAllowed = 'move'; });
+    }
     const pk = document.createElement('button'); pk.type = 'button'; pk.className = 'pick'; const n = tray[x.id] || 0;
     pk.setAttribute('aria-pressed', String(n > 0)); pk.textContent = n > 0 ? `인쇄 ${n}` : '＋ 인쇄';
     pk.onclick = () => { if (tray[x.id]) delete tray[x.id]; else tray[x.id] = 1; saveTray(); render(); };
     const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = x.caption || (x.takenAt || '').slice(11, 16);
-    f.append(o, pk, cap); tiles.appendChild(f);
+    if (selectMode) { const ck = document.createElement('span'); ck.className = 'ck'; ck.textContent = chosen.has(x.id) ? '✓' : ''; f.append(o, ck, cap); }
+    else f.append(o, pk, cap);
+    tiles.appendChild(f);
   });
   p.appendChild(tiles);
 }
@@ -504,7 +615,7 @@ $('pmSave').onclick = async () => {
   if (n > 0) tray[ed.id] = n; else delete tray[ed.id]; saveTray();
   $('pmSave').disabled = true; $('pmStatus').textContent = '저장 중…';
   try {
-    const upd = await patchPhoto(p, { date, takenAt: date === p.date ? p.takenAt : date + 'T12:00', zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
+    const upd = await patchPhoto(p, { date, takenAt: date === p.date ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
     if (ed.rot !== p.rot) { /* 회전이 바뀌면 썸네일은 CSS로 돌려 보여줌 */ }
     Object.assign(p, upd); savePhotos();
     if (date !== upd.date || date !== selected) { selected = upd.date; viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; }
@@ -678,6 +789,7 @@ async function sync(force) {
     setSyncLabel('동기화됨 ' + hm(new Date()));
     if (!accountEmail) loadAccount();
     await tidyFolders();
+    backfillPrints();
   } catch (e) {
     if (e instanceof AuthError) { showConnect(); note(''); setSyncLabel('연결 필요'); }
     else { setSyncLabel('동기화 실패'); if (force) note('드라이브에서 사진을 가져오지 못했어요. 인터넷 연결을 확인하고 ↻ 동기화를 눌러주세요.'); }

@@ -25,6 +25,7 @@
   </header>
 
   <div class="menu" id="menu" hidden>
+    <label class="check"><input type="checkbox" id="optSkipDup" checked> 중복 사진은 제외하고 올리기 (이미 보관함에 있는 사진은 건너뛰어요)</label>
     <label class="check"><input type="checkbox" id="optOriginal"> 원본 화질로 저장 (끄면 긴 변 2000px로 줄여 저장해 용량을 아껴요)</label>
     <div class="row">
       <button class="btn small" type="button" id="installBtn" hidden>홈 화면에 설치</button>
@@ -81,7 +82,7 @@
         </div>
       </div>
       <div class="stack">
-        <label class="field">날짜<input type="date" id="pmDate"></label>
+        <label class="field">날짜 (바꾸고 저장하면 그 날로 옮겨져요)<input type="date" id="pmDate"></label>
         <label class="field">메모<input type="text" id="pmCaption" maxlength="200" placeholder="예: 졸업식"></label>
         <div class="field">인쇄 매수
           <div class="row">
