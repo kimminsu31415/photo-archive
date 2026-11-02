@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-11'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-12'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -388,7 +388,7 @@ async function backfillPrints() {
 }
 
 /* ---------------- 사진 추가 (한 번에 여러 장 → 날짜별 자동 분류) ---------------- */
-async function addFiles(list) {
+async function addFiles(list, forceDate) {
   const files = [...(list || [])].filter((f) => f && (!f.type || f.type.startsWith('image/')));
   if (!files.length) return 0;
   if (uploading) { note('지금 다른 사진을 올리는 중이에요. 끝난 뒤 다시 추가해 주세요.'); return 0; }
@@ -407,7 +407,8 @@ async function addFiles(list) {
         const lm = new Date(f.lastModified || 0);
         const ex = await exifDate(f), nd = !ex && nameDate(f.name);
         const lmOk = f.lastModified && Date.now() - f.lastModified > 3600 * 1000;
-        const info = ex ? Object.assign(ex, { src: 'exif' }) : nd ? Object.assign(nd, { src: 'name' })
+        const info = forceDate ? { date: forceDate, at: `${forceDate}T${(ex || nd) ? (ex || nd).at.slice(11) : '12:00'}`, src: 'user' } // 날짜를 정해서 올릴 때: 그 날짜에, 시각은 사진 정보가 있으면 유지
+          : ex ? Object.assign(ex, { src: 'exif' }) : nd ? Object.assign(nd, { src: 'name' })
           : lmOk ? { date: ymd(lm), at: `${ymd(lm)}T${hm(lm)}`, src: 'file' } : { date: UNDATED, at: '', src: 'none' };
         const sha = await shaOf(f);
         const im = await blobToImage(f);
@@ -441,7 +442,8 @@ async function addFiles(list) {
   else if (undatedN) selected = UNDATED;
   render();
   const extra = (undatedN ? ` 찍은 날짜를 알 수 없는 ${undatedN}장은 ‘언제의 사진?’에 넣었어요.` : '') + (dup ? ` 이미 있는 사진 ${dup}장은 중복이라 뺐어요.` : '') + (bad ? ` ${bad}장은 열 수 없는 형식이라 넣지 못했어요.` : '');
-  if (ok) note((ok - undatedN ? `${ok - undatedN}장을 ${dates.size}개 날짜에 나눠 넣었어요.` : '') + extra);
+  const where = forceDate ? (() => { const d = new Date(forceDate + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일에 넣었어요.`; })() : `${dates.size}개 날짜에 나눠 넣었어요.`;
+  if (ok) note((ok - undatedN ? `${ok - undatedN}장을 ${where}` : '') + extra);
   else if (dup && !bad) note(`고른 사진 ${dup}장이 모두 이미 보관함에 있어서 새로 올리지 않았어요.`);
   else if (bad) note('사진을 열 수 없었어요. JPG나 PNG 사진인지 확인해 주세요.' + (dup ? ` 중복 ${dup}장은 뺐어요.` : ''));
   return ok;
@@ -541,6 +543,14 @@ function renderPanel() {
   else { const d = new Date(selected + 'T00:00:00'); h.innerHTML = `<span class="date">${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}</span><span class="wk">${WK[d.getDay()]} · ${d.getFullYear()}</span><span class="cnt num">${list.length}장</span>`; }
   p.appendChild(h);
   if (isU) { const n = document.createElement('p'); n.className = 'note'; n.textContent = '찍은 날짜를 알 수 없는 사진이에요. 골라서 날짜를 정하면 달력으로 옮겨져요.'; p.appendChild(n); }
+  else if (CLIENT_ID && Auth.valid() && !selectMode) {
+    // 이 날에 사진 추가: 갤러리에서 고른 사진을 찍은 날짜와 상관없이 이 날짜에 넣는다
+    const date = selected; const lab = document.createElement('label'); lab.className = 'btn small upload addday';
+    lab.textContent = '＋ 이 날에 사진 추가';
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.id = 'dayFile'; inp.setAttribute('aria-label', '이 날에 사진 추가');
+    inp.addEventListener('change', () => { const fs = [...inp.files]; inp.value = ''; addFiles(fs, date); });
+    lab.appendChild(inp); const row = document.createElement('div'); row.className = 'panelacts'; row.appendChild(lab); p.appendChild(row);
+  }
   if (!list.length) {
     const e = document.createElement('div'); e.className = 'empty';
     e.textContent = !loaded && Auth.valid() ? '드라이브에서 사진을 불러오는 중…'
