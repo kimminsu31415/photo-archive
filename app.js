@@ -7,6 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
+const APP_VERSION = '11.02-9'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -991,6 +992,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('memo
 /* ---------------- 메뉴 · 설치 · 연결 ---------------- */
 $('optOriginal').checked = !!store.get('pa-original', false);
 $('optOriginal').addEventListener('change', (e) => store.set('pa-original', e.target.checked));
+$('appVersion').textContent = `앱 버전 ${APP_VERSION}`;
 $('menuBtn').onclick = () => { const m = $('menu'); m.hidden = !m.hidden; $('menuBtn').setAttribute('aria-expanded', String(!m.hidden)); };
 let installEvt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; $('installBtn').hidden = false; });
