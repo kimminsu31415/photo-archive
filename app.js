@@ -6,7 +6,7 @@ const CLIENT_ID = (window.APP_CONFIG && window.APP_CONFIG.googleClientId || '').
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
-const FIELDS = 'id,name,description,appProperties,createdTime,imageMediaMetadata(width,height)';
+const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MEN = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
@@ -95,7 +95,7 @@ const Auth = {
   },
   signOut() {
     if (this.token && window.google && google.accounts) { try { google.accounts.oauth2.revoke(this.token, () => {}); } catch (_) {} }
-    this.token = null; this.exp = 0; store.del('pa-token'); store.del('pa-linked'); store.del('pa-folder');
+    this.token = null; this.exp = 0; store.del('pa-token'); store.del('pa-linked'); resetFolders();
   }
 };
 
@@ -109,52 +109,115 @@ async function api(url, opts = {}) {
 }
 const q = (s) => encodeURIComponent(s);
 
+/* 드라이브 폴더 구조: Photo Archive / 2026 / 2026-11 / 2026-11-02_사진.jpg */
 let folderId = store.get('pa-folder', null);
-async function ensureFolder() {
-  if (folderId) {
-    try { const r = await api(`${API}/files/${folderId}?fields=id,trashed`); const j = await r.json(); if (!j.trashed) return folderId; } catch (e) { if (e instanceof AuthError) throw e; }
-  }
-  const r = await api(`${API}/files?q=${q("appProperties has { key='photoArchive' and value='root' } and trashed=false")}&fields=files(id)&spaces=drive`);
-  const j = await r.json();
-  if (j.files && j.files.length) { folderId = j.files[0].id; }
-  else {
-    const c = await api(`${API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Photo Archive', mimeType: 'application/vnd.google-apps.folder', appProperties: { photoArchive: 'root' } }) });
-    folderId = (await c.json()).id;
-  }
-  store.set('pa-folder', folderId);
-  return folderId;
+let folderMap = store.get('pa-folders', {});
+const locks = new Map();
+function once(key, fn) {
+  if (locks.has(key)) return locks.get(key);
+  const p = fn().finally(() => locks.delete(key));
+  locks.set(key, p); return p;
+}
+function resetFolders() { folderId = null; folderMap = {}; store.del('pa-folder'); store.del('pa-folders'); }
+async function findOrCreate(name, parent, kind, key) {
+  const qs = `appProperties has { key='photoArchive' and value='${kind}' } and appProperties has { key='paKey' and value='${key}' } and '${parent}' in parents and trashed=false`;
+  const r = await api(`${API}/files?q=${q(qs)}&fields=files(id)&spaces=drive`); const j = await r.json();
+  if (j.files && j.files.length) return j.files[0].id;
+  const c = await api(`${API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parent], appProperties: { photoArchive: kind, paKey: key } }) });
+  return (await c.json()).id;
+}
+function ensureFolder() {
+  return once('root', async () => {
+    if (folderId) {
+      try { const r = await api(`${API}/files/${folderId}?fields=id,trashed`); const j = await r.json(); if (!j.trashed) return folderId; } catch (e) { if (e instanceof AuthError) throw e; }
+      resetFolders();
+    }
+    const r = await api(`${API}/files?q=${q("appProperties has { key='photoArchive' and value='root' } and trashed=false")}&fields=files(id)&spaces=drive`);
+    const j = await r.json();
+    if (j.files && j.files.length) { folderId = j.files[0].id; }
+    else {
+      const c = await api(`${API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Photo Archive', mimeType: 'application/vnd.google-apps.folder', appProperties: { photoArchive: 'root' } }) });
+      folderId = (await c.json()).id;
+    }
+    store.set('pa-folder', folderId);
+    return folderId;
+  });
+}
+async function folderFor(date) {
+  const y = date.slice(0, 4), ym = date.slice(0, 7);
+  if (folderMap[ym]) return folderMap[ym];
+  const root = await ensureFolder();
+  const yid = folderMap[y] || await once('y' + y, () => findOrCreate(y, root, 'year', y));
+  folderMap[y] = yid;
+  const mid = await once('m' + ym, () => findOrCreate(ym, yid, 'month', ym));
+  folderMap[ym] = mid; store.set('pa-folders', folderMap);
+  return mid;
 }
 function fromFile(f) {
   const a = f.appProperties || {}; const im = f.imageMediaMetadata || {};
   const created = new Date(f.createdTime || Date.now());
   return {
-    id: f.id, name: f.name, date: a.date || ymd(created), takenAt: a.takenAt || `${ymd(created)}T${hm(created)}`,
+    id: f.id, name: f.name, parent: (f.parents || [])[0] || null, date: a.date || ymd(created), takenAt: a.takenAt || `${ymd(created)}T${hm(created)}`,
     caption: f.description || '', zoom: +a.zoom || 1, cx: a.cx != null ? +a.cx : 0.5, cy: a.cy != null ? +a.cy : 0.5, rot: +a.rot || 0,
     w: +a.w || im.width || 0, h: +a.h || im.height || 0
   };
 }
 async function listAll() {
-  const fid = await ensureFolder();
+  await ensureFolder();
+  // drive.file 권한이라 이 앱이 만든 사진만 보인다 (하위 폴더 포함)
   const out = []; let page = '';
   do {
-    const r = await api(`${API}/files?q=${q(`'${fid}' in parents and trashed=false and mimeType contains 'image/'`)}&pageSize=1000&fields=nextPageToken,files(${FIELDS})${page ? '&pageToken=' + page : ''}`);
+    const r = await api(`${API}/files?q=${q("trashed=false and mimeType contains 'image/'")}&spaces=drive&pageSize=1000&fields=nextPageToken,files(${FIELDS})${page ? '&pageToken=' + page : ''}`);
     const j = await r.json(); (j.files || []).forEach((f) => out.push(fromFile(f))); page = j.nextPageToken || '';
   } while (page);
   return out;
 }
-async function uploadPhoto(blob, mime, name, props, caption) {
-  const fid = await ensureFolder();
-  const meta = { name, parents: [fid], mimeType: mime, appProperties: props, description: caption || '' };
+const datedName = (name, date) => /^\d{4}-\d{2}-\d{2}_/.test(name || '') ? date + name.slice(10) : `${date}_${name || 'photo.jpg'}`;
+async function uploadPhoto(blob, mime, name, props, caption, retried) {
+  let parent;
+  try { parent = await folderFor(props.date); } catch (e) { if (e instanceof AuthError || retried) throw e; resetFolders(); return uploadPhoto(blob, mime, name, props, caption, true); }
+  const meta = { name, parents: [parent], mimeType: mime, appProperties: props, description: caption || '' };
   const b = 'pa' + Math.random().toString(36).slice(2);
   const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${mime}\r\n\r\n`, blob, `\r\n--${b}--`]);
-  const r = await api(`${UPLOAD}?uploadType=multipart&fields=${q(FIELDS)}`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${b}` }, body });
+  try {
+    const r = await api(`${UPLOAD}?uploadType=multipart&fields=${q(FIELDS)}`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${b}` }, body });
+    return fromFile(await r.json());
+  } catch (e) {
+    // 폴더를 드라이브에서 지웠다면 폴더를 다시 만들고 한 번 더 시도
+    if (!retried && (e.status === 404 || e.status === 400)) { resetFolders(); return uploadPhoto(blob, mime, name, props, caption, true); }
+    throw e;
+  }
+}
+async function patchPhoto(p, props, caption) {
+  const body = { appProperties: props };
+  if (caption != null) body.description = caption;
+  let extra = '';
+  if (props.date) {
+    const target = await folderFor(props.date);
+    if (p.parent && p.parent !== target) extra = `&addParents=${target}&removeParents=${p.parent}`;
+    else if (!p.parent) extra = `&addParents=${target}`;
+    const nm = datedName(p.name, props.date); if (nm !== p.name) body.name = nm;
+  }
+  const r = await api(`${API}/files/${p.id}?fields=${q(FIELDS)}${extra}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return fromFile(await r.json());
 }
-async function patchPhoto(id, props, caption) {
-  const r = await api(`${API}/files/${id}?fields=${q(FIELDS)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appProperties: props, description: caption }) });
-  return fromFile(await r.json());
+/* 예전에 폴더 구분 없이 올린 사진을 연도/월 폴더로 옮긴다 */
+let tidying = false;
+async function tidyFolders() {
+  if (tidying) return; tidying = true;
+  try {
+    const wrong = [];
+    for (const p of photos) { const t = await folderFor(p.date); if (p.parent !== t || !/^\d{4}-\d{2}-\d{2}_/.test(p.name || '')) wrong.push(p); }
+    let n = 0;
+    for (const p of wrong) {
+      n++; note(`드라이브 폴더 정리 중 ${n} / ${wrong.length}`);
+      try { const u = await patchPhoto(p, { date: p.date }); Object.assign(p, { parent: u.parent, name: u.name }); }
+      catch (e) { if (e instanceof AuthError) throw e; }
+    }
+    if (wrong.length) { savePhotos(); note(`드라이브의 사진 ${wrong.length}장을 연도·월 폴더로 정리했어요.`); }
+  } finally { tidying = false; }
 }
 async function trashPhoto(id) {
   await api(`${API}/files/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) });
@@ -441,7 +504,7 @@ $('pmSave').onclick = async () => {
   if (n > 0) tray[ed.id] = n; else delete tray[ed.id]; saveTray();
   $('pmSave').disabled = true; $('pmStatus').textContent = '저장 중…';
   try {
-    const upd = await patchPhoto(ed.id, { date, takenAt: date === p.date ? p.takenAt : date + 'T12:00', zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
+    const upd = await patchPhoto(p, { date, takenAt: date === p.date ? p.takenAt : date + 'T12:00', zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
     if (ed.rot !== p.rot) { /* 회전이 바뀌면 썸네일은 CSS로 돌려 보여줌 */ }
     Object.assign(p, upd); savePhotos();
     if (date !== upd.date || date !== selected) { selected = upd.date; viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; }
@@ -595,6 +658,7 @@ async function sync(force) {
       if (!photos.some((p) => p.date.startsWith(mk))) { const last = photos.map((p) => p.date).sort().pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
     }
     render(); if (force) note('');
+    await tidyFolders();
   } catch (e) {
     if (e instanceof AuthError) { showConnect(); note(''); }
     else note('드라이브에서 사진을 가져오지 못했어요. 인터넷 연결을 확인하고 설정 → 드라이브에서 새로고침을 눌러주세요.');
