@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-9'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.02-10'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -23,7 +23,9 @@ const store = {
 
 let photos = store.get('pa-photos', []);
 let tray = store.get('pa-tray', {});
-const S = Object.assign({ w: 30, h: 20, gap: 2, cut: true }, store.get('pa-size', {}));
+const S = Object.assign({ w: 34, h: 23, gap: 2, cut: true }, store.get('pa-size', {}));
+// 예전 크기(3×2, 2×3, 3.4×3.1)를 쓰던 기기는 캘린더형 3.4×2.3으로
+if ([[30, 20], [20, 30], [34, 31]].some(([w, h]) => S.w === w && S.h === h)) { S.w = 34; S.h = 23; }
 S.margin = 10; // 스티커 용지라 가장자리 1cm는 항상 비워 둔다
 const now = new Date();
 let viewY = now.getFullYear(), viewM = now.getMonth(), selected = ymd(now);
@@ -637,26 +639,52 @@ $('prevM').onclick = () => shift(-1); $('nextM').onclick = () => shift(1);
 $('todayM').onclick = () => { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); selected = ymd(t); render(); };
 
 /* ---------------- 사진 편집 ---------------- */
-let ed = null;
+let ed = null, pmId = null;
 async function openPhoto(id) {
-  const p = photos.find((x) => x.id === id); if (!p) return;
+  const p = photos.find((x) => x.id === id); if (!p) return; pmId = id;
   $('pmDate').value = p.date === UNDATED ? '' : p.date; $('pmCaption').value = p.caption || ''; $('pmCopies').value = tray[id] || 0; $('pmStatus').textContent = '';
   $('pmDelete').textContent = '사진 삭제'; $('pmDelete').dataset.armed = '';
-  $('cropHint').textContent = `밝은 테두리 안이 ${S.w / 10}×${S.h / 10} cm로 인쇄될 부분이에요. 끌어서 위치를 맞추세요.`;
+  const img = $('pmImg'); img.removeAttribute('src'); img.style.transform = p.rot ? `rotate(${p.rot * 90}deg)` : '';
   $('photoModal').hidden = false; $('pmClose').focus();
+  getThumb(id).then((u) => { if (pmId === id && !img.src) img.src = u; }).catch(() => {});
+  try { const b = await fullBlob(id); if (pmId === id) img.src = URL.createObjectURL(b); }
+  catch (e) { if (e instanceof AuthError) { $('pmStatus').textContent = '구글 연결이 끊겼어요. 다시 연결해 주세요.'; showConnect(); } }
+}
+/* 인쇄 목록 안의 인쇄 영역 편집 */
+async function openCrop(id) {
+  const p = photos.find((x) => x.id === id); if (!p) return;
+  const box = $('cropEdit'); box.hidden = false; $('ceStatus').textContent = '사진 불러오는 중…';
+  $('ceTitle').textContent = `${p.date === UNDATED ? '날짜 모름' : p.date.replace(/-/g, '.')} ${p.caption || ''}`.trim();
+  $('ceSize').textContent = `${S.w / 10}×${S.h / 10} cm`;
+  $('cropHint').textContent = '밝은 테두리 안이 인쇄될 부분이에요. 끌어서 위치를 맞추고 확대·회전할 수 있어요.';
   const c = $('cropCanvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   try {
     const im = await loadFull(p);
     ed = { id, img: im, rot: p.rot || 0, zoom: p.zoom || 1, cx: p.cx, cy: p.cy }; ed.src = rotated(im, ed.rot);
-    $('zoom').value = ed.zoom; drawCrop();
-  } catch (e) { $('pmStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겼어요. 다시 연결해 주세요.' : '사진을 불러오지 못했어요.'; if (e instanceof AuthError) showConnect(); }
+    $('zoom').value = ed.zoom; drawCrop(); $('ceStatus').textContent = '';
+  } catch (e) { $('ceStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겼어요. 다시 연결해 주세요.' : '사진을 불러오지 못했어요.'; if (e instanceof AuthError) showConnect(); }
 }
+function closeCrop() { $('cropEdit').hidden = true; ed = null; }
+$('ceCancel').onclick = closeCrop;
+$('ceSave').onclick = async () => {
+  if (!ed) return; const p = photos.find((x) => x.id === ed.id); if (!p) return;
+  $('ceSave').disabled = true; $('ceStatus').textContent = '저장 중…';
+  try {
+    const upd = await patchPhoto(p, { zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) });
+    Object.assign(p, { zoom: upd.zoom, cx: upd.cx, cy: upd.cy, rot: upd.rot }); savePhotos();
+    closeCrop(); renderPrint();
+  } catch (e) {
+    $('ceStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겼어요. 다시 연결한 뒤 저장해 주세요.' : '저장하지 못했어요. 잠시 후 다시 눌러주세요.';
+    if (e instanceof AuthError) showConnect();
+  } finally { $('ceSave').disabled = false; }
+};
 function drawCrop() {
   if (!ed) return; const c = $('cropCanvas'); const H0 = Math.round(360 * S.h / S.w); const k = Math.min(1, 300 / H0);
   c.width = Math.round(360 * k); c.height = Math.round(H0 * k); const g = c.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); const r = cropRect(ed, c.width, c.height); g.drawImage(ed.src, r.sx, r.sy, r.vw, r.vh, 0, 0, c.width, c.height);
 }
-function closePhoto() { $('photoModal').hidden = true; ed = null; }
+function closePhoto() { $('photoModal').hidden = true; pmId = null; }
 $('pmClose').onclick = closePhoto;
 $('photoModal').addEventListener('click', (e) => { if (e.target === $('photoModal')) closePhoto(); });
 $('zoom').addEventListener('input', (e) => { if (!ed) return; ed.zoom = +e.target.value; drawCrop(); });
@@ -677,13 +705,12 @@ const copiesVal = () => Math.max(0, Math.min(999, parseInt($('pmCopies').value, 
 $('pmMinus').onclick = () => { $('pmCopies').value = Math.max(0, copiesVal() - 1); };
 $('pmPlus').onclick = () => { $('pmCopies').value = Math.min(999, copiesVal() + 1); };
 $('pmSave').onclick = async () => {
-  if (!ed) return; const p = photos.find((x) => x.id === ed.id); if (!p) return;
+  if (!pmId) return; const p = photos.find((x) => x.id === pmId); if (!p) return;
   const date = $('pmDate').value || p.date; const n = copiesVal(); const dateChanged = date !== p.date;
-  if (n > 0) tray[ed.id] = n; else delete tray[ed.id]; saveTray();
+  if (n > 0) tray[p.id] = n; else delete tray[p.id]; saveTray();
   $('pmSave').disabled = true; $('pmStatus').textContent = '저장 중…';
   try {
-    const upd = await patchPhoto(p, { date, takenAt: !dateChanged ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, src: dateChanged ? 'user' : (p.src || ''), zoom: ed.zoom.toFixed(3), cx: ed.cx.toFixed(4), cy: ed.cy.toFixed(4), rot: String(ed.rot) }, $('pmCaption').value.trim());
-    if (ed.rot !== p.rot) { /* 회전이 바뀌면 썸네일은 CSS로 돌려 보여줌 */ }
+    const upd = await patchPhoto(p, { date, takenAt: !dateChanged ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, src: dateChanged ? 'user' : (p.src || '') }, $('pmCaption').value.trim());
     Object.assign(p, upd); savePhotos();
     if (dateChanged) { selected = upd.date; if (upd.date !== UNDATED) { viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; } }
     closePhoto(); render();
@@ -693,9 +720,9 @@ $('pmSave').onclick = async () => {
   } finally { $('pmSave').disabled = false; }
 };
 $('pmDelete').onclick = async () => {
-  const b = $('pmDelete'); if (!ed) return;
+  const b = $('pmDelete'); if (!pmId) return;
   if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = '한 번 더 누르면 삭제돼요 (드라이브 휴지통으로 이동)'; return; }
-  const id = ed.id; b.disabled = true;
+  const id = pmId; b.disabled = true;
   try {
     await trashPhoto(id); photos = photos.filter((x) => x.id !== id); delete tray[id]; saveTray(); savePhotos();
     IDB.del('thumbs', id).catch(() => {}); closePhoto(); render(); note('사진을 드라이브 휴지통으로 옮겼어요. 30일 안에는 드라이브에서 되살릴 수 있어요.');
@@ -734,13 +761,16 @@ async function renderPrint() {
     pl.onclick = () => { tray[p.id] = Math.min(999, tray[p.id] + 1); saveTray(); renderPrint(); };
     inp.onchange = () => { tray[p.id] = Math.max(1, Math.min(999, parseInt(inp.value, 10) || 1)); saveTray(); renderPrint(); };
     st.append(m, inp, pl);
-    const x = document.createElement('button'); x.type = 'button'; x.className = 'btn small'; x.textContent = '빼기'; x.onclick = () => { delete tray[p.id]; saveTray(); renderPrint(); };
-    li.append(im, lb, st, x); ul.appendChild(li);
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'btn small'; x.textContent = '빼기'; x.onclick = () => { if (ed && ed.id === p.id) closeCrop(); delete tray[p.id]; saveTray(); renderPrint(); };
+    const edb = document.createElement('button'); edb.type = 'button'; edb.className = 'btn small'; edb.textContent = '편집'; edb.onclick = () => openCrop(p.id);
+    const acts = document.createElement('div'); acts.className = 'tacts'; acts.append(edb, x);
+    li.append(im, lb, st, acts); ul.appendChild(li);
   });
   document.querySelectorAll('#presets .btn').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.w === S.w && +b.dataset.h === S.h)));
   const L = layout(); const total = items.reduce((a, p) => a + tray[p.id], 0); const pages = L.per ? Math.max(1, Math.ceil(total / L.per)) : 0;
   $('prSummary').textContent = L.per ? `A4 한 장에 ${L.cols}×${L.rows} = ${L.per}칸 · ${total}장 · ${pages}페이지` : '사진이 A4에 들어가지 않아요. 크기나 여백을 줄여주세요.';
   $('prSave').disabled = !total || !L.per; render();
+  if (ed) { $('ceSize').textContent = `${S.w / 10}×${S.h / 10} cm`; drawCrop(); }
   const t = ++tok; const box = $('prPages');
   let prep; try { prep = await prepared(); } catch (e) { if (t === tok) { box.innerHTML = ''; $('prStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겨서 미리보기를 못 만들었어요. 다시 연결해 주세요.' : '사진을 불러오지 못했어요.'; } return; }
   if (t !== tok) return;
@@ -753,7 +783,7 @@ async function renderPrint() {
     L.cells.forEach((c, i) => {
       const id = all[pg * L.per + i]; if (!id) return; const d = document.createElement('div'); d.className = 'cell' + (S.cut ? ' cut' : '');
       d.style.left = c.x / A4W * 100 + '%'; d.style.top = c.y / A4H * 100 + '%'; d.style.width = S.w / A4W * 100 + '%'; d.style.height = S.h / A4H * 100 + '%';
-      const im = document.createElement('img'); im.alt = ''; im.src = urls[id]; d.appendChild(im); a4.appendChild(d);
+      const im = document.createElement('img'); im.alt = ''; im.src = urls[id]; d.appendChild(im); d.title = '눌러서 편집'; d.onclick = () => openCrop(id); a4.appendChild(d);
     });
     box.append(lab, a4);
   }
@@ -763,7 +793,7 @@ function openPrint() {
   $('sw').value = S.w; $('sh').value = S.h; $('sgap').value = S.gap; $('scut').checked = S.cut;
   renderPrint(); $('prClose').focus();
 }
-function closePrint() { $('printModal').hidden = true; }
+function closePrint() { $('printModal').hidden = true; closeCrop(); }
 $('trayBtn').onclick = openPrint; $('prClose').onclick = closePrint;
 $('printModal').addEventListener('click', (e) => { if (e.target === $('printModal')) closePrint(); });
 ['sw', 'sh', 'sgap'].forEach((id) => $(id).addEventListener('change', () => {

@@ -75,17 +75,11 @@
 <!-- 사진 편집 -->
 <div class="modal" id="photoModal" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
-    <div class="head"><h2 id="pmTitle">사진 편집</h2><button class="btn small" type="button" id="pmClose">닫기</button></div>
+    <div class="head"><h2 id="pmTitle">사진 정보</h2><button class="btn small" type="button" id="pmClose">닫기</button></div>
     <div class="cols">
       <div class="stack">
-        <div class="cropbox" id="cropbox"><canvas id="cropCanvas" width="360" height="240"></canvas></div>
-        <p class="note" id="cropHint"></p>
-        <div class="row"><span class="note">확대</span><input type="range" id="zoom" min="1" max="4" step="0.01" value="1" aria-label="확대"></div>
-        <div class="row">
-          <button class="btn small" type="button" id="rotL">↺ 회전</button>
-          <button class="btn small" type="button" id="rotR">↻ 회전</button>
-          <button class="btn small" type="button" id="recenter">가운데로</button>
-        </div>
+        <div class="pmview"><img id="pmImg" alt=""></div>
+        <p class="note">인쇄될 부분은 <b>인쇄 목록</b>에서 사진의 ‘편집’을 눌러 맞춰요.</p>
       </div>
       <div class="stack">
         <label class="field">날짜 (바꾸고 저장하면 그 날로 옮겨져요)<input type="date" id="pmDate"></label>
@@ -112,16 +106,30 @@
     <div class="head"><h2 id="prTitle">인쇄 목록 · A4</h2><button class="btn small" type="button" id="prClose">닫기</button></div>
     <div class="cols">
       <div class="stack">
+        <section class="cropedit" id="cropEdit" hidden aria-label="인쇄 영역 편집">
+          <div class="row ceh"><b id="ceTitle">사진 편집</b><span class="note" id="ceSize"></span></div>
+        <div class="cropbox" id="cropbox"><canvas id="cropCanvas" width="360" height="240"></canvas></div>
+        <p class="note" id="cropHint"></p>
+        <div class="row"><span class="note">확대</span><input type="range" id="zoom" min="1" max="4" step="0.01" value="1" aria-label="확대"></div>
+        <div class="row">
+          <button class="btn small" type="button" id="rotL">↺ 회전</button>
+          <button class="btn small" type="button" id="rotR">↻ 회전</button>
+          <button class="btn small" type="button" id="recenter">가운데로</button>
+        </div>
+          <div class="row">
+            <button class="btn primary small" type="button" id="ceSave">저장</button>
+            <button class="btn small" type="button" id="ceCancel">취소</button>
+          </div>
+          <div class="status" id="ceStatus" role="status"></div>
+        </section>
         <ul class="tray" id="tray"></ul>
         <div class="presets" id="presets">
-          <button class="btn small" type="button" data-w="34" data-h="31">캘린더형 3.4×3.1 cm</button>
+          <button class="btn small" type="button" data-w="34" data-h="23">캘린더형 3.4×2.3 cm</button>
           <button class="btn small" type="button" data-w="26" data-h="26">리스트형 2.6×2.6 cm</button>
-          <button class="btn small" type="button" data-w="30" data-h="20">가로 3×2 cm</button>
-          <button class="btn small" type="button" data-w="20" data-h="30">세로 2×3 cm</button>
         </div>
         <div class="grid2">
-          <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="210" step="0.5" value="30"></label>
-          <label class="field">세로 (mm)<input type="number" id="sh" min="5" max="297" step="0.5" value="20"></label>
+          <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="210" step="0.5" value="34"></label>
+          <label class="field">세로 (mm)<input type="number" id="sh" min="5" max="297" step="0.5" value="23"></label>
           <label class="field">간격 (mm)<input type="number" id="sgap" min="0" max="20" step="0.5" value="2"></label>
         </div>
         <label class="check"><input type="checkbox" id="scut" checked> 재단선 표시</label>
