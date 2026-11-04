@@ -11,17 +11,21 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=Gowun+Batang:wght@400;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="wrap">
   <header class="top">
     <h1>PHOTO ARCHIVE · 사진 보관함</h1>
-    <label class="btn primary upload" id="uploadBtn" hidden>＋ 사진 추가<input type="file" id="file" accept="image/*" multiple aria-label="사진 추가"></label>
+    <nav class="tabs" aria-label="화면">
+      <button type="button" class="tab" id="tabCal" aria-pressed="true">달력</button>
+      <button type="button" class="tab" id="tabBook" aria-pressed="false">수첩</button>
+    </nav>
+    <label class="btn primary upload calonly" id="uploadBtn" hidden>＋ 사진 추가<input type="file" id="file" accept="image/*" multiple aria-label="사진 추가"></label>
     <button class="btn" id="syncBtn" type="button" hidden title="드라이브와 동기화">↻ <span id="syncLabel">동기화</span></button>
-    <button class="btn" id="memoBtn" type="button">메모지 인쇄</button>
-    <button class="btn" id="trayBtn" type="button">인쇄 목록 <span class="badge" id="trayCount">0</span></button>
+    <button class="btn calonly" id="memoBtn" type="button">메모지 인쇄</button>
+    <button class="btn calonly" id="trayBtn" type="button">인쇄 목록 <span class="badge" id="trayCount">0</span></button>
     <button class="btn" id="menuBtn" type="button" aria-expanded="false" aria-controls="menu">설정</button>
   </header>
 
@@ -50,9 +54,9 @@
   </section>
 
   <p class="note" id="note" role="status" hidden></p>
-  <div class="undobar" id="undoBar" hidden><span class="note">방금 옮긴 사진을 원래 날짜로 돌릴 수 있어요.</span><button class="btn small" type="button" id="undoBtn">되돌리기</button></div>
+  <div class="undobar calonly" id="undoBar" hidden><span class="note">방금 옮긴 사진을 원래 날짜로 돌릴 수 있어요.</span><button class="btn small" type="button" id="undoBtn">되돌리기</button></div>
 
-  <div class="layout">
+  <div class="layout calonly" id="calView">
     <section class="cal" aria-label="월간 달력">
       <div class="calhead">
         <div class="mnum" id="mNum"></div>
@@ -72,6 +76,103 @@
     </section>
     <section class="panel" id="panel" aria-label="선택한 날짜의 사진"></section>
   </div>
+</div>
+
+<!-- 수첩 -->
+<div class="wrap bookonly" id="bookView" hidden>
+  <section class="shelf" id="shelf" aria-label="수첩 목록">
+    <div class="shelfhead">
+      <div>
+        <h2 class="bk-h">수첩</h2>
+        <p class="note">달력에 저장한 사진을 골라 한 권의 책처럼 꾸며요. 사진은 달력과 연결만 되어 있어서, 달력에서 날짜를 옮겨도 수첩은 그대로예요.</p>
+      </div>
+      <form class="newbook" id="newBook">
+        <input type="text" id="newTitle" maxlength="40" placeholder="수첩 제목 (예: 민수의 생일 이슈)" aria-label="새 수첩 제목">
+        <button class="btn primary" type="submit">새 수첩 만들기</button>
+      </form>
+    </div>
+    <p class="note" id="shelfNote"></p>
+    <div class="books" id="books"></div>
+  </section>
+
+  <section class="editor" id="editor" hidden aria-label="수첩 편집">
+    <div class="bk-bar">
+      <button class="btn small" type="button" id="bkBack">← 수첩 목록</button>
+      <input type="text" id="bkTitle" class="bk-title" maxlength="40" aria-label="수첩 제목">
+      <span class="note num" id="bkSaved"></span>
+      <div class="bk-baracts">
+        <button class="btn small" type="button" id="bkView">넘겨 보기</button>
+        <button class="btn small primary" type="button" id="bkPdf">PDF 저장</button>
+        <button class="btn small danger" type="button" id="bkDelete">수첩 삭제</button>
+      </div>
+    </div>
+    <div class="bk-main">
+      <aside class="bk-pages" aria-label="페이지 목록">
+        <div class="bk-thumbs" id="bkThumbs"></div>
+        <div class="bk-addpage">
+          <select id="bkNewTpl" class="sel" aria-label="추가할 페이지 종류"></select>
+          <button class="btn small" type="button" id="bkAddPage">＋ 페이지 추가</button>
+        </div>
+      </aside>
+      <div class="bk-stagewrap">
+        <div class="bk-stage" id="bkStage"></div>
+        <p class="note bk-hint" id="bkHint">글자를 눌러 바로 고치고, 사진 칸을 누른 뒤 아래 사진함에서 사진을 고르세요.</p>
+      </div>
+      <aside class="bk-side">
+        <section class="bk-panel">
+          <h3>이 페이지</h3>
+          <label class="field">레이아웃<select id="bkTpl" class="sel"></select></label>
+          <div class="field">바탕색<div class="swatches" id="bkBg"></div></div>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="bkInk"> 흰 글씨</label>
+          </div>
+          <div class="row">
+            <button class="btn small" type="button" id="bkUp">← 앞으로</button>
+            <button class="btn small" type="button" id="bkDown">뒤로 →</button>
+            <button class="btn small" type="button" id="bkDup">복제</button>
+            <button class="btn small danger" type="button" id="bkDelPage">페이지 삭제</button>
+          </div>
+        </section>
+        <section class="bk-panel" id="bkSelPanel" hidden>
+          <h3 id="bkSelTitle">선택한 칸</h3>
+          <div id="bkSelPhoto" class="stack" hidden>
+            <div class="row"><span class="note">확대</span><input type="range" id="bkZoom" min="1" max="3" step="0.01" value="1" aria-label="사진 확대"></div>
+            <p class="note">사진을 끌어서 위치를 맞춰요.</p>
+            <button class="btn small" type="button" id="bkClearSlot">칸 비우기</button>
+          </div>
+          <div id="bkSelText" class="row" hidden>
+            <span class="note">글자 크기</span>
+            <button class="btn small" type="button" id="bkFontDown" aria-label="글자 작게">가−</button>
+            <button class="btn small" type="button" id="bkFontUp" aria-label="글자 크게">가＋</button>
+          </div>
+        </section>
+        <section class="bk-panel">
+          <div class="row bk-poolhead"><h3>수첩 사진함 <span class="num" id="bkPoolCount">0</span></h3>
+            <button class="btn small primary" type="button" id="bkPick">달력에서 사진 고르기</button></div>
+          <div class="row"><button class="btn small" type="button" id="bkAutoFill">빈 칸 채우기</button><span class="note">안 쓴 사진으로 이 페이지의 빈 칸을 채워요.</span></div>
+          <div class="pool" id="bkPool"></div>
+        </section>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<!-- 수첩: 달력에서 사진 고르기 -->
+<div class="modal" id="bkPicker" hidden>
+  <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="bpTitle">
+    <div class="head"><h2 id="bpTitle">달력에서 사진 고르기</h2><button class="btn small" type="button" id="bpClose">닫기</button></div>
+    <div class="months" id="bpMonths"></div>
+    <div class="bp-list" id="bpList"></div>
+    <div class="row bp-foot"><span class="note" id="bpCount">0장 선택</span><button class="btn primary" type="button" id="bpAdd" disabled>수첩에 담기</button></div>
+  </div>
+</div>
+
+<!-- 수첩: 넘겨 보기 -->
+<div class="viewer" id="bkViewer" hidden role="dialog" aria-modal="true" aria-label="수첩 넘겨 보기">
+  <div class="vw-top"><span id="vwTitle"></span><span class="num" id="vwPage"></span><button class="btn small" type="button" id="vwClose">닫기</button></div>
+  <div class="vw-stage" id="vwStage"></div>
+  <button class="vw-nav prev" type="button" id="vwPrev" aria-label="이전 쪽">‹</button>
+  <button class="vw-nav next" type="button" id="vwNext" aria-label="다음 쪽">›</button>
 </div>
 
 <!-- 사진 편집 -->
@@ -218,5 +319,6 @@
 <script src="vendor/jspdf.umd.min.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js" defer></script>
+<script src="book.js" defer></script>
 </body>
 </html>

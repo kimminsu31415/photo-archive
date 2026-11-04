@@ -1,5 +1,5 @@
 // 사진 보관함 서비스 워커: 앱 화면 캐시 + 갤러리 '공유하기'로 받은 사진 보관
-const VERSION = 'pa-v15';
+const VERSION = 'pa-v16';
 const SHELL = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   './config.js',
   './manifest.webmanifest',
   './vendor/jspdf.umd.min.js',
+  './book.js',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];

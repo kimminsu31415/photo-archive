@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.02-16'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.04-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -823,7 +823,10 @@ $('pmSave').onclick = async () => {
 };
 $('pmDelete').onclick = async () => {
   const b = $('pmDelete'); if (!pmId) return;
-  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = '한 번 더 누르면 삭제돼요 (드라이브 휴지통으로 이동)'; return; }
+  if (!b.dataset.armed) {
+    const used = (window.PB && window.PB.usedIn(pmId)) || [];
+    b.dataset.armed = '1'; b.textContent = (used.length ? `수첩 ‘${used.join('’, ‘')}’에 쓰인 사진이에요. ` : '') + '한 번 더 누르면 삭제돼요 (드라이브 휴지통으로 이동)'; return;
+  }
   const id = pmId; b.disabled = true;
   try {
     await trashPhoto(id); photos = photos.filter((x) => x.id !== id); delete tray[id]; saveTray(); savePhotos();
@@ -1176,6 +1179,7 @@ async function sync(force) {
       if (dated.length && !dated.some((d) => d.startsWith(mk))) { const last = dated.pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
     }
     if (changed && $('photoModal').hidden) render(); else updateTrayCount();
+    if (changed && window.PB) window.PB.onPhotos();
     if (force) note('');
     else if (added && changed && document.visibilityState === 'visible') note(`다른 기기에서 추가한 사진 ${added}장을 가져왔어요.`);
     setSyncLabel('동기화됨 ' + hm(new Date()));
@@ -1195,6 +1199,13 @@ $('syncBtn').onclick = async () => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastSync > 10000) sync(false); });
 window.addEventListener('focus', () => { if (Date.now() - lastSync > 10000) sync(false); });
 setInterval(() => { if (document.visibilityState === 'visible' && Auth.valid()) sync(false); }, 40000);
+
+/* ---------------- 수첩(book.js)에서 쓰는 기능 ---------------- */
+window.PA = {
+  get photos() { return photos; }, api, API, UPLOAD, q, store, ymd, hm, note, dayLabel, UNDATED, AuthError, Auth, IDB,
+  getThumb, fullBlob, findDup, ensureFolder, findOrCreate, showConnect, CLIENT_ID,
+  savePdf: (doc, name) => { const url = URL.createObjectURL(doc.output('blob')); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+};
 
 /* ---------------- 시작 ---------------- */
 if ('serviceWorker' in navigator) {
