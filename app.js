@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.15-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.15-2'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -289,7 +289,7 @@ function getThumb(id) {
 function thumbImg(p, cls) {
   const im = document.createElement('img'); im.alt = p.caption || ''; if (cls) im.className = cls;
   if (p.rot) im.style.transform = `rotate(${p.rot * 90}deg)`;
-  getThumb(p.id).then((u) => { im.src = u; }).catch(() => { im.alt = '불러오기 실패'; });
+  getThumb(p.id).then((u) => { im.src = u; }).catch(() => { im.alt = '불러오기 실패'; imgFailed(); });
   return im;
 }
 async function loadFull(p) { const b = await fullBlob(p.id); return blobToImage(b); }
@@ -637,8 +637,8 @@ const fullUrl = new Map();
 function cardImg(p) {
   const im = el('img'); im.alt = p.caption || ''; im.draggable = false;
   if (fullUrl.has(p.id)) { im.src = fullUrl.get(p.id); return im; }
-  getThumb(p.id).then((u) => { if (!im.dataset.full) im.src = u; }).catch(() => {});
-  fullBlob(p.id).then((b) => { if (!fullUrl.has(p.id)) fullUrl.set(p.id, URL.createObjectURL(b)); im.dataset.full = '1'; im.src = fullUrl.get(p.id); }).catch(() => {});
+  getThumb(p.id).then((u) => { if (!im.dataset.full) im.src = u; }).catch(() => imgFailed());
+  fullBlob(p.id).then((b) => { if (!fullUrl.has(p.id)) fullUrl.set(p.id, URL.createObjectURL(b)); im.dataset.full = '1'; im.src = fullUrl.get(p.id); }).catch(() => imgFailed());
   return im;
 }
 function openWeek(key) { mode = 'week'; selected = key; phonePage = 0; render(); window.scrollTo({ top: 0 }); }
@@ -1398,7 +1398,7 @@ function showConnect() {
 }
 $('connectBtn').onclick = async () => {
   $('connectNote').textContent = '구글 창에서 계정을 고르고 허용을 눌러주세요.';
-  try { await Auth.request(); accountEmail = ''; store.del('pa-email'); showConnect(); note(''); await sync(true); await processPending(); }
+  try { await Auth.request(); accountEmail = ''; store.del('pa-email'); showConnect(); note(''); await sync(true); if (!editingNow()) render(); await processPending(); }
   catch (e) { $('connectNote').textContent = e && e.type === 'popup_closed' ? '연결 창이 닫혔어요. 다시 눌러주세요.' : '연결하지 못했어요. 팝업이 막혀 있다면 허용한 뒤 다시 눌러주세요.'; }
 };
 
@@ -1449,6 +1449,24 @@ $('syncBtn').onclick = async () => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastSync > 10000) sync(false); });
 window.addEventListener('focus', () => { if (Date.now() - lastSync > 10000) sync(false); });
 setInterval(() => { if (document.visibilityState === 'visible' && Auth.valid()) sync(false); }, 40000);
+
+/* 사진을 못 불러온 경우: 대부분 1시간마다 끝나는 구글 연결 때문. 연결을 이어 붙인 뒤 다시 불러온다 */
+let imgFailT = null, imgRetries = 0;
+function imgFailed() {
+  clearTimeout(imgFailT);
+  imgFailT = setTimeout(() => {
+    if (!Auth.valid()) { showConnect(); note('구글 연결 시간이 끝나 일부 사진을 못 불러왔어요. 화면을 한 번 누르거나 ‘다시 연결’을 누르면 이어서 불러와요.'); }
+    else if (imgRetries < 2) { imgRetries++; setTimeout(() => { if (!editingNow()) render(); }, 4000); } // 잠깐 실패한 경우 두 번까지 다시
+  }, 300);
+}
+// 연결이 끝났거나 곧 끝나면, 다음에 화면을 누를 때 조용히 연결을 이어 붙인다 (구글 창은 누를 때만 열 수 있음)
+let renewing = false;
+document.addEventListener('pointerdown', () => {
+  if (renewing || !CLIENT_ID || !store.get('pa-linked', false) || (Auth.token && Auth.exp > Date.now() + 5 * 60000)) return;
+  const wasValid = Auth.valid(); renewing = true;
+  Auth.request().then(() => { showConnect(); if (!wasValid) { note(''); sync(true).then(() => { if (!editingNow()) render(); }); } })
+    .catch(() => {}).finally(() => { renewing = false; });
+}, true);
 
 /* ---------------- 시작 ---------------- */
 if ('serviceWorker' in navigator) {
