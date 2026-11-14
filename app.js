@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.04-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.15-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -174,6 +174,7 @@ function fromFile(f) {
     caption: f.description || '', zoom: +a.zoom || 1, cx: a.cx != null ? +a.cx : 0.5, cy: a.cy != null ? +a.cy : 0.5, rot: +a.rot || 0,
     w: +a.w || im.width || 0, h: +a.h || im.height || 0, sha: a.sha || '', dh: a.dh || '',
     src: a.src || '', created: ymd(created),
+    gx: a.gx != null ? +a.gx : null, gy: a.gy != null ? +a.gy : null, gw: a.gw != null ? +a.gw : null, // 주간 플래너 모눈 쪽 자리
     ot: a.ot || ((a.src === 'exif' || a.src === 'name' || a.src === 'file') ? (a.takenAt || '') : '') // 사진에 원래 적힌 찍은 시각 (중복 판별용)
   };
 }
@@ -460,9 +461,9 @@ async function addFiles(list, forceDate) {
   };
   await Promise.all([worker(), worker(), worker()]);
   uploading = false; savePhotos(); lastSync = Date.now(); setSyncLabel('동기화됨 ' + hm(new Date()));
-  if (forceDate) { selected = forceDate; viewY = +forceDate.slice(0, 4); viewM = +forceDate.slice(5, 7) - 1; }
+  if (forceDate) { selected = forceDate; viewY = +forceDate.slice(0, 4); viewM = +forceDate.slice(5, 7) - 1; if (mode === 'undated') mode = 'week'; }
   else if (latest) { selected = latest; viewY = +latest.slice(0, 4); viewM = +latest.slice(5, 7) - 1; }
-  else if (undatedN) selected = UNDATED;
+  else if (undatedN) { mode = 'undated'; selectMode = false; }
   render();
   if (toMove.length) { dupAsk = { date: forceDate, ids: toMove.slice() }; renderPanel(); }
   const whereDup = (() => {
@@ -528,7 +529,7 @@ async function movePhotos(ids, date) {
   }
   savePhotos(); chosen.clear(); candChosen.clear(); selectMode = false;
   const label = date === UNDATED ? '‘언제의 사진?’' : (() => { const d = new Date(date + 'T00:00:00'); return `${d.getMonth() + 1}월 ${d.getDate()}일`; })();
-  if (selected !== UNDATED || date !== UNDATED) { selected = date; if (date !== UNDATED) { viewY = +date.slice(0, 4); viewM = +date.slice(5, 7) - 1; } }
+  if (date !== UNDATED && mode !== 'undated') { if (mode === 'week') selected = date; viewY = +date.slice(0, 4); viewM = +date.slice(5, 7) - 1; }
   render();
   if (ok) { note(`${ok}장을 ${label}${date === UNDATED ? '에' : '로'} 옮겼어요.` + (fail ? ` ${fail}장은 옮기지 못했어요.` : '')); showUndo(log); }
 }
@@ -546,131 +547,389 @@ function showUndo(log) {
         const u = await patchPhoto(p, props); Object.assign(p, { date: u.date, takenAt: u.takenAt, src: u.src, parent: u.parent, name: u.name }); n++;
       } catch (e) { if (e instanceof AuthError) { showConnect(); break; } }
     }
-    savePhotos(); const d = log[0].date; selected = d; if (d !== UNDATED) { viewY = +d.slice(0, 4); viewM = +d.slice(5, 7) - 1; }
+    savePhotos(); const d = log[0].date; if (d !== UNDATED && mode !== 'undated') { if (mode === 'week') selected = d; viewY = +d.slice(0, 4); viewM = +d.slice(5, 7) - 1; }
     render(); note(`${n}장을 원래 날짜로 되돌렸어요.`);
   };
 }
 const canDrag = window.matchMedia('(pointer: fine)').matches;
 
-/* ---------------- 달력 ---------------- */
+/* ---------------- 플래너: 연간 달력 → 주간 플래너(주간 쪽 + 모눈 쪽) ---------------- */
+const WKM = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const MEN2 = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+let mode = 'month';          // 'month' 연간 달력 · 'week' 주간 플래너 · 'undated' 언제의 사진?
+let phonePage = 0;           // 휴대폰 주간 플래너: 0 주간 쪽, 1 모눈 쪽
+let zTop = 10;
+const wideMQ = window.matchMedia('(min-width: 1100px)');
+const isWide = () => wideMQ.matches;
+const onWide = () => { if (!editingNow()) render(); };
+if (wideMQ.addEventListener) wideMQ.addEventListener('change', onWide); else if (wideMQ.addListener) wideMQ.addListener(onWide);
+const pad2 = (n) => String(n).padStart(2, '0');
+const parseD = (s) => { const a = s.split('-').map(Number); return new Date(a[0], a[1] - 1, a[2]); };
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const monIdx = (d) => (d.getDay() + 6) % 7;
+const mondayOf = (d) => addDays(d, -monIdx(d));
+// 주 번호: 1월 1일이 들어 있는 주가 1주 (플래너 표기)
+const weekNo = (mon) => { const sun = addDays(mon, 6); const j = mondayOf(new Date(sun.getFullYear(), 0, 1)); return Math.round((mon - j) / 604800000) + 1; };
+const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+const mkb = (txt, cls, fn, aria) => { const b = el('button', 'btn ' + (cls || ''), txt); b.type = 'button'; if (fn) b.onclick = fn; if (aria) b.setAttribute('aria-label', aria); return b; };
+const editingNow = () => { const a = document.activeElement; return !!(a && /^(TEXTAREA|INPUT)$/.test(a.tagName) && a.closest && a.closest('#calView')); };
+
+/* ---- 날짜 메모와 대표 사진: 드라이브 Photo Archive/planner.json ---- */
+let planner = Object.assign({ v: 1, rep: {}, notes: {} }, store.get('pa-planner', {}));
+let plannerId = store.get('pa-planner-id', null), plannerT = null, plannerDirty = false, plannerSaving = false;
+function savePlannerSoon() {
+  store.set('pa-planner', planner); plannerDirty = true;
+  clearTimeout(plannerT); plannerT = setTimeout(savePlanner, 1200);
+}
+async function savePlanner() {
+  if (!plannerDirty || plannerSaving || !Auth.valid()) return;
+  plannerSaving = true; plannerDirty = false;
+  const body = JSON.stringify(planner);
+  try {
+    if (plannerId) {
+      try { await api(`${UPLOAD}/${plannerId}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body }); }
+      catch (e) { if (e.status === 404) plannerId = null; else throw e; }
+    }
+    if (!plannerId) {
+      const fid = await ensureFolder(); const b = 'pl' + Math.random().toString(36).slice(2);
+      const meta = { name: 'planner.json', parents: [fid], mimeType: 'application/json', appProperties: { photoArchive: 'planner' } };
+      const r = await api(`${UPLOAD}?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${b}` },
+        body: new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, body, `\r\n--${b}--`]) });
+      plannerId = (await r.json()).id; store.set('pa-planner-id', plannerId);
+    }
+  } catch (e) { plannerDirty = true; if (!(e instanceof AuthError)) { clearTimeout(plannerT); plannerT = setTimeout(savePlanner, 5000); } }
+  finally { plannerSaving = false; }
+}
+async function loadPlanner() {
+  if (plannerDirty || plannerSaving) return false;
+  const r = await api(`${API}/files?q=${q("appProperties has { key='photoArchive' and value='planner' } and trashed=false")}&spaces=drive&fields=files(id)`);
+  const f = ((await r.json()).files || [])[0]; if (!f) return false;
+  plannerId = f.id; store.set('pa-planner-id', plannerId);
+  const d = await (await api(`${API}/files/${f.id}?alt=media`)).json();
+  if (plannerDirty) return false;
+  const next = Object.assign({ v: 1, rep: {}, notes: {} }, d);
+  const changed = JSON.stringify(next) !== JSON.stringify(planner);
+  planner = next; store.set('pa-planner', planner); return changed;
+}
+
+/* 그날 사진은 찍은 시각 순서. 대표 사진은 고른 사진, 고르지 않았으면 가장 먼저 찍은 사진 */
 function byDate() {
   const g = {}; photos.forEach((p) => { (g[p.date] = g[p.date] || []).push(p); });
   Object.values(g).forEach((a) => a.sort((x, y) => (x.takenAt || '').localeCompare(y.takenAt || '')));
   return g;
 }
-function render() { renderCal(); renderPanel(); updateTrayCount(); }
-function renderCal() {
-  // 달력 연·월이 숫자가 아니게 되면 오늘로 되돌린다
-  if (!Number.isInteger(viewY) || !Number.isInteger(viewM) || viewM < 0 || viewM > 11) { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); }
-  const g = byDate();
-  $('mNum').textContent = viewM + 1; $('mYear').textContent = viewY; $('mEn').textContent = MEN[viewM];
-  const grid = $('grid'); grid.innerHTML = '';
-  // 한 주는 월요일부터 시작: 월 화 수 목 금 토 일
-  const order = [1, 2, 3, 4, 5, 6, 0];
-  order.forEach((wd) => { const d = document.createElement('div'); d.className = 'wd' + (wd === 0 ? ' sun' : wd === 6 ? ' sat' : ''); d.textContent = WK[wd]; grid.appendChild(d); });
-  const start = (new Date(viewY, viewM, 1).getDay() + 6) % 7; const n = new Date(viewY, viewM + 1, 0).getDate();
-  const cells = Math.ceil((start + n) / 7) * 7; const today = ymd(new Date()); let count = 0;
-  for (let i = 0; i < cells; i++) {
-    const dn = i - start + 1; const col = i % 7;
-    if (dn < 1 || dn > n) { const e = document.createElement('div'); e.className = 'day out'; grid.appendChild(e); continue; }
-    const key = `${viewY}-${String(viewM + 1).padStart(2, '0')}-${String(dn).padStart(2, '0')}`; const list = g[key] || []; count += list.length;
-    const b = document.createElement('button'); b.type = 'button';
-    b.className = 'day' + (col === 6 ? ' sun' : col === 5 ? ' sat' : '') + (key === today ? ' today' : '') + (list.length ? ' has' : '');
-    b.setAttribute('aria-pressed', String(key === selected)); b.setAttribute('aria-label', `${viewM + 1}월 ${dn}일, 사진 ${list.length}장`);
-    const d = document.createElement('span'); d.className = 'd'; d.textContent = dn; b.appendChild(d);
-    if (list.length) {
-      const th = document.createElement('span'); th.className = 'th'; th.appendChild(thumbImg(list[0])); b.appendChild(th);
-      const c = document.createElement('span'); c.className = 'c'; c.textContent = list.length; b.appendChild(c);
-    }
-    if (canDrag) {
-      b.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-pa-ids')) { e.preventDefault(); e.stopPropagation(); b.classList.add('drop'); } });
-      b.addEventListener('dragleave', () => b.classList.remove('drop'));
-      b.addEventListener('drop', (e) => {
-        const ids = e.dataTransfer.getData('text/x-pa-ids'); if (!ids) return;
-        e.preventDefault(); e.stopPropagation(); b.classList.remove('drop'); movePhotos(ids.split(','), key);
-      });
-    }
-    b.onclick = () => { selected = key; render(); if (window.innerWidth <= 820) $('panel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-    grid.appendChild(b);
-  }
-  $('monthSum').textContent = `이번 달 사진 ${count}장`;
-  const und = g[UNDATED] || []; const sus = suspects(); const box = $('undatedBox');
-  box.hidden = !und.length && !sus.length;
-  box.setAttribute('aria-pressed', String(selected === UNDATED));
-  $('undatedCount').textContent = `${und.length}장` + (sus.length ? ` · 확인할 사진 ${sus.length}장` : '');
-  const th = $('undatedThumbs'); th.innerHTML = ''; und.slice(0, 5).forEach((p) => th.appendChild(thumbImg(p)));
+function repOf(key, list) { const id = planner.rep[key]; const c = id && list.find((p) => p.id === id); return { rep: c || list[0] || null, auto: !c }; }
+function dropTarget(elm, key) {
+  if (!canDrag) return;
+  elm.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-pa-ids')) { e.preventDefault(); e.stopPropagation(); elm.classList.add('drop'); } });
+  elm.addEventListener('dragleave', () => elm.classList.remove('drop'));
+  elm.addEventListener('drop', (e) => { const ids = e.dataTransfer.getData('text/x-pa-ids'); if (!ids) return; e.preventDefault(); e.stopPropagation(); elm.classList.remove('drop'); movePhotos(ids.split(','), key); });
 }
-function renderPanel() {
-  const p = $('panel'); p.innerHTML = ''; const list = byDate()[selected] || []; const isU = selected === UNDATED;
-  const h = document.createElement('div'); h.className = 'ph';
-  if (isU) h.innerHTML = `<span class="date utitle">언제의 사진?</span><span class="cnt num">${list.length}장</span>`;
-  else { const d = new Date(selected + 'T00:00:00'); h.innerHTML = `<span class="date">${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}</span><span class="wk">${WK[d.getDay()]} · ${d.getFullYear()}</span><span class="cnt num">${list.length}장</span>`; }
-  p.appendChild(h);
-  if (dupAsk && dupAsk.date === selected) renderDupAsk(p);
-  if (isU) { const n = document.createElement('p'); n.className = 'note'; n.textContent = '찍은 날짜를 알 수 없는 사진이에요. 골라서 날짜를 정하면 달력으로 옮겨져요.'; p.appendChild(n); }
-  else if (CLIENT_ID && Auth.valid() && !selectMode) {
-    // 이 날에 사진 추가: 갤러리에서 고른 사진을 찍은 날짜와 상관없이 이 날짜에 넣는다
-    const date = selected; const lab = document.createElement('label'); lab.className = 'btn small upload addday';
-    lab.textContent = '＋ 이 날에 사진 추가';
-    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = pickerAccept(); inp.multiple = true; inp.id = 'dayFile'; inp.setAttribute('aria-label', '이 날에 사진 추가');
-    inp.addEventListener('change', () => { const fs = [...inp.files]; inp.value = ''; addFiles(fs, date); });
-    lab.appendChild(inp); const row = document.createElement('div'); row.className = 'panelacts'; row.appendChild(lab); p.appendChild(row);
+/* 두 줄을 넘기는 입력은 받지 않는다 (줄바꿈으로 저절로 넘어간 줄까지 칸 높이로 잰다) */
+function twoLineLimit(ta, onOk) {
+  ta.dataset.prev = ta.value;
+  ta.addEventListener('input', () => {
+    if (ta.value.split('\n').length > 2 || ta.scrollHeight > ta.clientHeight + 1) { ta.value = ta.dataset.prev; return; }
+    ta.dataset.prev = ta.value; onOk(ta.value);
+  });
+}
+const fullUrl = new Map();
+function cardImg(p) {
+  const im = el('img'); im.alt = p.caption || ''; im.draggable = false;
+  if (fullUrl.has(p.id)) { im.src = fullUrl.get(p.id); return im; }
+  getThumb(p.id).then((u) => { if (!im.dataset.full) im.src = u; }).catch(() => {});
+  fullBlob(p.id).then((b) => { if (!fullUrl.has(p.id)) fullUrl.set(p.id, URL.createObjectURL(b)); im.dataset.full = '1'; im.src = fullUrl.get(p.id); }).catch(() => {});
+  return im;
+}
+function openWeek(key) { mode = 'week'; selected = key; phonePage = 0; render(); window.scrollTo({ top: 0 }); }
+function toMonth(key) { const d = parseD(key); mode = 'month'; viewY = d.getFullYear(); viewM = d.getMonth(); render(); }
+
+function render() { renderPlanner(); updateTrayCount(); }
+function renderPanel() { render(); }
+function renderPlanner() {
+  if (!Number.isInteger(viewY) || !Number.isInteger(viewM) || viewM < 0 || viewM > 11) { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); }
+  if (mode === 'week' && (!selected || selected === UNDATED)) mode = 'month';
+  const g = byDate();
+  $('panel').hidden = mode !== 'undated'; $('book').hidden = mode === 'undated';
+  if (mode === 'month') renderMonth(g); else if (mode === 'week') renderWeek(g); else renderUndated(g);
+}
+function undatedButton(g) {
+  const und = g[UNDATED] || []; const sus = suspects();
+  if (!und.length && !sus.length) return null;
+  const u = mkb(`언제의 사진? ${und.length}장` + (sus.length ? ` · 확인할 사진 ${sus.length}장` : ''), 'small dashed', () => { mode = 'undated'; selectMode = false; render(); });
+  dropTarget(u, UNDATED); return u;
+}
+
+/* ---- 연간 달력: 펼침면 한 장 = 한 달 (왼쪽: 메모 칸 + 월화수, 오른쪽: 목금토일) ---- */
+function renderMonth(g) {
+  const tool = $('ptool'); tool.innerHTML = '';
+  const shiftM = (d) => { viewM += d; if (viewM < 0) { viewM = 11; viewY--; } if (viewM > 11) { viewM = 0; viewY++; } render(); };
+  tool.append(mkb('‹', 'small', () => shiftM(-1), '이전 달'));
+  if (isWide()) {
+    const tabs = el('nav', 'mtabs'); tabs.setAttribute('aria-label', '달 선택');
+    for (let i = 0; i < 12; i++) { const b = mkb(String(i + 1), 'small mtab', () => { viewM = i; render(); }, `${viewY}년 ${i + 1}월`); b.setAttribute('aria-pressed', String(i === viewM)); tabs.append(b); }
+    tool.append(tabs, mkb('›', 'small', () => shiftM(1), '다음 달'), el('span', 'ptool-y num', String(viewY)));
+  } else tool.append(el('span', 'ptool-y num', `${viewY}.${pad2(viewM + 1)}`), mkb('›', 'small', () => shiftM(1), '다음 달'));
+  tool.append(mkb('오늘', 'small', () => { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); render(); }));
+  const u = undatedButton(g); if (u) { u.classList.add('spacer'); tool.append(u); }
+
+  const book = $('book'); book.innerHTML = ''; const wide = isWide();
+  book.className = 'book' + (wide ? ' wide' : ' narrow');
+  const first = monIdx(new Date(viewY, viewM, 1)); const nd = new Date(viewY, viewM + 1, 0).getDate(); const today = ymd(new Date());
+  const cell = (i) => {
+    const d = i - first + 1; const col = i % 7;
+    if (i < 0 || d < 1 || d > nd) return el('div', 'pc out');
+    const k = `${viewY}-${pad2(viewM + 1)}-${pad2(d)}`; const list = g[k] || []; const { rep } = repOf(k, list);
+    const w = el('div', 'pc' + (col === 6 ? ' sun' : '') + (k === today ? ' today' : ''));
+    const hit = el('button', 'pc-hit'); hit.type = 'button';
+    hit.setAttribute('aria-label', `${viewM + 1}월 ${d}일, 사진 ${list.length}장, 주간 플래너 열기`); hit.onclick = () => openWeek(k); dropTarget(hit, k);
+    w.append(hit, el('span', 'pc-n', String(d)));
+    if (list.length) { const th = el('span', 'pc-th'); th.appendChild(thumbImg(rep)); w.append(th, el('span', 'pc-c', String(list.length))); }
+    const memo = el('textarea', 'pc-memo' + (d < 10 ? ' one' : '')); memo.rows = 2; memo.maxLength = 24; memo.value = planner.notes[k] || '';
+    memo.setAttribute('aria-label', `${viewM + 1}월 ${d}일 메모 (두 줄)`);
+    twoLineLimit(memo, (v) => { if (v) planner.notes[k] = v; else delete planner.notes[k]; savePlannerSoon(); });
+    w.append(memo);
+    return w;
+  };
+  const head = (labels) => { const h = el('div', 'mlabels'); labels.forEach((t) => { if (t && typeof t === 'object') h.append(t); else h.append(el('span', 'wdl' + (t === 'SUN' ? ' sun' : ''), t || '')); }); return h; };
+  if (wide) {
+    const mt = el('div', 'mhead'); mt.append(el('span', 'mbig', String(viewM + 1)), el('span', 'men', MEN2[viewM]));
+    const L = el('section', 'pp'); L.setAttribute('aria-label', `${viewY}년 ${viewM + 1}월 달력 왼쪽 쪽`);
+    const R = el('section', 'pp'); R.setAttribute('aria-label', `${viewY}년 ${viewM + 1}월 달력 오른쪽 쪽`);
+    const gl = el('div', 'pgrid'), gr = el('div', 'pgrid');
+    for (let r = 0; r < 6; r++) {
+      gl.append(el('div', 'pc note'), cell(r * 7), cell(r * 7 + 1), cell(r * 7 + 2));
+      gr.append(cell(r * 7 + 3), cell(r * 7 + 4), cell(r * 7 + 5), cell(r * 7 + 6));
+    }
+    L.append(head([mt, 'MON', 'TUE', 'WED']), gl); R.append(head(['THU', 'FRI', 'SAT', 'SUN']), gr);
+    book.append(L, R);
+  } else {
+    const P = el('section', 'pp'); P.setAttribute('aria-label', `${viewY}년 ${viewM + 1}월 달력`);
+    const mt = el('div', 'mhead'); mt.append(el('span', 'mbig', String(viewM + 1)), el('span', 'men', MEN2[viewM]));
+    const h = el('div', 'mlabels seven'); WKM.forEach((t) => h.append(el('span', 'wdl' + (t === 'SUN' ? ' sun' : ''), t)));
+    const gd = el('div', 'pgrid seven'); for (let i = 0; i < 42; i++) gd.append(cell(i));
+    P.append(mt, h, gd, el('p', 'note', '날짜를 누르면 그 주 플래너로 넘어가요. 날짜 옆 빈 곳에 메모를 적을 수 있어요.'));
+    book.append(P);
   }
-  if (!list.length) {
-    const e = document.createElement('div'); e.className = 'empty';
-    e.textContent = !loaded && Auth.valid() ? '드라이브에서 사진을 불러오는 중…'
-      : isU ? '날짜를 알 수 없는 사진이 없어요.'
-      : photos.length ? '이 날에는 사진이 없어요. 달력에서 사진이 있는 날을 눌러보세요.'
-      : '아직 저장된 사진이 없어요. ‘사진 추가’로 앨범에서 여러 장을 한 번에 고르면, 사진마다 찍은 날짜를 읽어 달력의 해당 날짜에 넣어드려요. 휴대폰에서는 갤러리에서 사진을 고른 뒤 공유 → 사진 보관함으로 보내도 돼요.';
-    p.appendChild(e); if (isU) renderSuspects(p); return;
+}
+
+/* ---- 주간 플래너 ---- */
+function miniCal(month, mon, sun) {
+  const box = el('div', 'mini'); box.append(el('b', '', String(month.getMonth() + 1)));
+  const gd = el('div', 'mini-g'); 'MTWTFSS'.split('').forEach((h, i) => gd.append(el('span', 'h' + (i === 6 ? ' sun' : ''), h)));
+  const f = monIdx(month); const n = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  for (let i = 0; i < Math.ceil((f + n) / 7) * 7; i++) {
+    const d = i - f + 1; const inM = d >= 1 && d <= n; const dt = new Date(month.getFullYear(), month.getMonth(), d); const col = i % 7;
+    const s = el('span', col === 6 ? 'sun' : '', inM ? String(d) : '');
+    if (inM && dt >= mon && dt <= sun) { s.classList.add('in'); if (col === 0 || d === 1) s.classList.add('l'); if (col === 6 || d === n) s.classList.add('r'); }
+    gd.append(s);
   }
-  const acts = document.createElement('div'); acts.className = 'panelacts';
-  const mkBtn = (t, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small' + (cls ? ' ' + cls : ''); b.textContent = t; b.onclick = fn; return b; };
+  box.append(gd); return box;
+}
+function buildWeekPage(g, mon, sun, day) {
+  const s = el('section', 'pp'); s.setAttribute('aria-label', `${mon.getMonth() + 1}월 ${weekNo(mon)}주`);
+  const head = el('div', 'wkhead'); const t = el('div', 'wkt'); t.append(el('span', 'mbig', String(mon.getMonth() + 1)), el('span', 'wkno', `week ${weekNo(mon)}`));
+  const minis = el('div', 'minis'); minis.append(miniCal(new Date(mon.getFullYear(), mon.getMonth(), 1), mon, sun));
+  if (isWide()) minis.append(miniCal(new Date(mon.getFullYear(), mon.getMonth() + 1, 1), mon, sun));
+  head.append(t, minis); s.append(head);
+  const rows = el('div', 'wrows'); const maxN = isWide() ? 5 : 4;
+  for (let i = 0; i < 7; i++) {
+    const dt = addDays(mon, i); const k = ymd(dt); const list = g[k] || []; const { rep } = repOf(k, list);
+    const row = el('div', 'wr' + (k === day ? ' on' : ''));
+    [7.4, 37, 66.7].forEach((x) => { const dot = el('span', 'dot'); dot.style.left = x + '%'; dot.setAttribute('aria-hidden', 'true'); row.append(dot); });
+    const pick = () => { selected = k; if (!isWide()) phonePage = 1; render(); };
+    const db = el('button', 'wr-d' + (i === 6 ? ' sun' : '')); db.type = 'button'; db.setAttribute('aria-label', `${dt.getMonth() + 1}월 ${dt.getDate()}일 사진 보기`); db.onclick = pick;
+    db.append(el('span', 'wr-n', String(dt.getDate())), el('span', 'wr-w', WKM[i]));
+    const th = el('div', 'wr-th');
+    list.slice(0, maxN).forEach((p) => {
+      const b = el('button', 'wr-p'); b.type = 'button'; b.setAttribute('aria-label', `${dt.getMonth() + 1}월 ${dt.getDate()}일 ${(p.takenAt || '').slice(11, 16)} 사진`); b.onclick = pick;
+      b.appendChild(thumbImg(p)); if (p === rep) b.append(el('span', 'tag', '대표'));
+      if (canDrag) { b.draggable = true; b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-pa-ids', p.id); e.dataTransfer.effectAllowed = 'move'; }); }
+      th.append(b);
+    });
+    if (list.length > maxN) th.append(el('span', 'wr-more', `+${list.length - maxN}`));
+    dropTarget(row, k);
+    row.append(db, th); rows.append(row);
+  }
+  s.append(rows);
+  if (!isWide()) s.append(el('p', 'note', '날짜를 누르거나 왼쪽으로 밀면 그날 사진이 모눈 쪽에 펼쳐져요.'));
+  return s;
+}
+const pendingCap = {}, pendingGeom = {};
+function buildDayPage(g, day) {
+  const dd = parseD(day); const list = g[day] || []; const { rep, auto } = repOf(day, list);
+  const s = el('section', 'pp gp'); s.setAttribute('aria-label', `${dd.getMonth() + 1}월 ${dd.getDate()}일 사진`);
+  const head = el('div', 'dphead'); head.append(el('span', 'dpdate', `${dd.getMonth() + 1}.${pad2(dd.getDate())}`), el('span', 'dpwk', `${WKM[monIdx(dd)]} · ${dd.getFullYear()}`), el('span', 'dpcnt', `${list.length}장${list.length ? ' · 사진은 끌어서 옮기고, 모서리를 끌어 크기를 바꿔요' : ''}`));
+  s.append(head);
+  if (planner.notes[day]) s.append(el('p', 'dpnote onpaper', '달력 메모 · ' + planner.notes[day].replace(/\n/g, ' / ')));
+  if (dupAsk && dupAsk.date === day) renderDupAsk(s);
+  const area = el('div', 'cards'); s.append(area);
+  if (!list.length) area.append(el('p', 'empty onpaper', '이 날에는 사진이 없어요. 아래 ‘사진 추가’로 갤러리에서 골라 넣을 수 있어요.'));
+  const foot = el('div', 'dpfoot');
+  if (CLIENT_ID && Auth.valid()) {
+    const lab = el('label', 'btn small upload', `＋ ${dd.getMonth() + 1}월 ${dd.getDate()}일에 사진 추가`);
+    const inp = el('input'); inp.type = 'file'; inp.accept = pickerAccept(); inp.multiple = true; inp.setAttribute('aria-label', '이 날에 사진 추가');
+    inp.addEventListener('change', () => { const fs = [...inp.files]; inp.value = ''; addFiles(fs, day); });
+    lab.append(inp); foot.append(lab);
+  }
+  if (list.length) {
+    const allIn = list.every((x) => tray[x.id]);
+    foot.append(mkb(allIn ? '이 날 사진 인쇄 목록에서 빼기' : '이 날 사진 모두 인쇄 목록에 담기', 'small', () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }));
+  }
+  if (auto && list.length > 1) foot.append(el('span', 'note onpaper', '대표 사진을 고르지 않아 가장 먼저 찍은 사진이 대표예요'));
+  s.append(foot);
+  s._cards = { area, list, rep, auto, day };
+  return s;
+}
+/* 모눈 쪽 사진 카드: 위치(gx, gy)와 너비(gw)는 쪽 크기에 대한 비율로 사진마다 드라이브에 저장 */
+function placeCards(info) {
+  const { area, list, rep, auto, day } = info; const AW = area.clientWidth, AH = area.clientHeight; const n = list.length;
+  if (!AW || !AH) return;
+  const baseF = n <= 1 ? 0.78 : n === 2 ? 0.54 : n === 3 ? 0.46 : n === 4 ? 0.41 : 0.31;
+  const defPos = (i) => {
+    if (n <= 1) return { x: 0.11, y: 0.02 };
+    if (n === 2) return [{ x: 0, y: 0 }, { x: 0.43, y: 0.5 }][i];
+    if (n === 3) return [{ x: 0, y: 0 }, { x: 0.53, y: 0.09 }, { x: 0.24, y: 0.55 }][i];
+    if (n === 4) return [{ x: 0, y: 0 }, { x: 0.565, y: 0.05 }, { x: 0.04, y: 0.52 }, { x: 0.565, y: 0.57 }][i];
+    return { x: (i % 3) * 0.343, y: Math.floor(i / 3) * 0.36 };
+  };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  list.forEach((p, i) => {
+    const ar = p.w && p.h ? clamp(p.w / p.h, 0.6, 1.8) : 4 / 3;
+    const def = defPos(i);
+    const card = el('figure', 'card'); card.style.zIndex = String(i + 1);
+    const ph = el('div', 'card-ph'); ph.style.aspectRatio = String(ar); ph.setAttribute('role', 'img'); ph.setAttribute('aria-label', `${(p.takenAt || '').slice(11, 16)} 사진, 끌어서 옮기기`);
+    ph.append(cardImg(p)); if (p === rep) ph.append(el('span', 'tag big', '대표 사진'));
+    const rs = el('button', 'card-rs'); rs.type = 'button'; rs.setAttribute('aria-label', '사진 크기 조절 (끌기)');
+    rs.innerHTML = '<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M9 3L3 9M9 6L6 9"/></svg>';
+    ph.append(rs);
+    const cap = el('figcaption', 'card-cap');
+    const ta = el('textarea', 'card-txt'); ta.rows = 2; ta.placeholder = '사진 설명을 적어보세요'; ta.value = p.caption || ''; ta.setAttribute('aria-label', `${(p.takenAt || '').slice(11, 16)} 사진 설명`);
+    ta.addEventListener('input', () => {
+      p.caption = ta.value; pendingCap[p.id] = ta.value; clearTimeout(ta._t);
+      ta._t = setTimeout(() => { patchPhoto(p, {}, p.caption).then(() => { if (pendingCap[p.id] === p.caption) delete pendingCap[p.id]; savePhotos(); }).catch((e) => { if (e instanceof AuthError) showConnect(); }); }, 900);
+    });
+    const row = el('div', 'card-row');
+    row.append(el('span', 'card-time', (p.takenAt || '').slice(11, 16) + (p === rep && auto && n > 1 ? ' · 가장 먼저 찍음' : '')));
+    const rb = mkb(p === rep ? '대표 사진' : '대표로', 'small card-b' + (p === rep ? ' on' : ''), () => { planner.rep[day] = p.id; savePlannerSoon(); render(); }); rb.setAttribute('aria-pressed', String(p === rep));
+    const cnt = tray[p.id] || 0;
+    const pb = mkb(cnt ? `인쇄 ${cnt}` : '＋ 인쇄', 'small card-b' + (cnt ? ' on' : ''), () => { if (tray[p.id]) delete tray[p.id]; else tray[p.id] = 1; saveTray(); render(); });
+    const ib = mkb('정보', 'small card-b', () => openPhoto(p.id), '사진 정보 · 날짜 바꾸기 · 삭제');
+    row.append(rb, pb, ib); cap.append(ta, row); card.append(ph, cap); area.append(card);
+
+    let w = clamp((p.gw != null ? p.gw : def.x != null ? baseF : baseF) * AW, 100, AW);
+    let x = clamp((p.gx != null ? p.gx : def.x) * AW, 0, Math.max(0, AW - w));
+    let y = (p.gy != null ? p.gy : def.y) * AH;
+    const apply = () => { card.style.width = w + 'px'; card.style.left = x + 'px'; card.style.top = y + 'px'; };
+    apply();
+    const capH = () => card.offsetHeight - ph.offsetHeight;
+    y = clamp(y, 0, Math.max(0, AH - card.offsetHeight)); apply();
+    const saveGeom = () => {
+      p.gx = x / AW; p.gy = y / AH; p.gw = w / AW; pendingGeom[p.id] = { gx: p.gx, gy: p.gy, gw: p.gw };
+      clearTimeout(card._t);
+      card._t = setTimeout(() => {
+        patchPhoto(p, { gx: p.gx.toFixed(4), gy: p.gy.toFixed(4), gw: p.gw.toFixed(4) }).then(() => { delete pendingGeom[p.id]; savePhotos(); }).catch((e) => { if (e instanceof AuthError) showConnect(); });
+      }, 600);
+    };
+    const drag = (e, onMove) => {
+      e.preventDefault(); e.stopPropagation(); card.style.zIndex = String(++zTop);
+      const sx = e.clientX, sy = e.clientY, x0 = x, y0 = y, w0 = w; const t = e.currentTarget; try { t.setPointerCapture(e.pointerId); } catch (_) {}
+      const mv = (ev) => { onMove(ev.clientX - sx, ev.clientY - sy, x0, y0, w0); apply(); };
+      const up = () => { t.removeEventListener('pointermove', mv); t.removeEventListener('pointerup', up); t.removeEventListener('pointercancel', up); saveGeom(); };
+      t.addEventListener('pointermove', mv); t.addEventListener('pointerup', up); t.addEventListener('pointercancel', up);
+    };
+    ph.addEventListener('pointerdown', (e) => {
+      if (e.target === rs || rs.contains(e.target)) return;
+      drag(e, (dx, dy, x0, y0) => { x = clamp(x0 + dx, 0, Math.max(0, AW - w)); y = clamp(y0 + dy, 0, Math.max(0, AH - card.offsetHeight)); });
+    });
+    rs.addEventListener('pointerdown', (e) => drag(e, (dx, dy, x0, y0, w0) => {
+      const dw = Math.abs(dx) > Math.abs(dy * ar) ? dx : dy * ar;          // 비율은 그대로, 더 많이 움직인 쪽 기준
+      const maxByH = (AH - y - capH()) * ar + 12;
+      w = clamp(w0 + dw, 100, Math.max(100, Math.min(AW - x, maxByH)));
+    }));
+  });
+}
+function renderWeek(g) {
+  const day = selected; const dd = parseD(day); const mon = mondayOf(dd); const sun = addDays(mon, 6); const wide = isWide();
+  const tool = $('ptool'); tool.innerHTML = '';
+  tool.append(mkb(`‹ ${dd.getMonth() + 1}월 달력으로`, 'small primary', () => toMonth(day)));
+  const shiftW = (n) => { const nm = addDays(mon, n); let pick = nm; for (let i = 0; i < 7; i++) { const t = addDays(nm, i); if ((g[ymd(t)] || []).length) { pick = t; break; } } selected = ymd(pick); render(); };
+  tool.append(mkb('‹ 이전 주', 'small', () => shiftW(-7)), mkb('다음 주 ›', 'small', () => shiftW(7)));
+  tool.append(el('span', 'rng', `${mon.getMonth() + 1}.${pad2(mon.getDate())} — ${sun.getMonth() + 1}.${pad2(sun.getDate())}`));
+  const u = undatedButton(g); if (u) { u.classList.add('spacer'); tool.append(u); }
+
+  const book = $('book'); book.innerHTML = '';
+  const left = buildWeekPage(g, mon, sun, day), right = buildDayPage(g, day);
+  if (wide) {
+    book.className = 'book wide'; book.append(left, right);
+  } else {
+    book.className = 'book narrow';
+    const seg = el('div', 'seg'); seg.setAttribute('aria-label', '쪽 선택');
+    const bW = mkb('주간', 'small', () => setPage(0)), bG = mkb('모눈', 'small', () => setPage(1)); seg.append(bW, bG);
+    if (!u) seg.classList.add('spacer'); tool.append(seg);
+    const view = el('div', 'swipe'); const track = el('div', 'track'); track.append(left, right); view.append(track); book.append(view);
+    const setPage = (n) => {
+      phonePage = n; track.style.transform = `translateX(${n ? '-50%' : '0'})`;
+      bW.setAttribute('aria-pressed', String(n === 0)); bG.setAttribute('aria-pressed', String(n === 1));
+      if (n === 1 && !right._placed) { right._placed = true; requestAnimationFrame(() => placeCards(right._cards)); }
+    };
+    // 왼쪽으로 밀면 모눈 쪽, 오른쪽으로 밀면 주간 쪽 (사진 옮기기·글쓰기와는 겹치지 않게)
+    view.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.card, textarea, input, label')) return;
+      const sx = e.clientX, sy = e.clientY;
+      const up = (ev) => {
+        window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) setPage(dx < 0 ? 1 : 0);
+      };
+      window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    });
+    track.style.transition = 'none'; setPage(phonePage); requestAnimationFrame(() => { track.style.transition = ''; });
+    return;
+  }
+  right._placed = true; placeCards(right._cards);
+}
+
+/* ---- 언제의 사진? ---- */
+function renderUndated() {
+  const tool = $('ptool'); tool.innerHTML = '';
+  tool.append(mkb('‹ 달력으로', 'small primary', () => { mode = 'month'; render(); }));
+  renderUndatedPanel();
+}
+function renderUndatedPanel() {
+  const p = $('panel'); p.innerHTML = ''; const list = byDate()[UNDATED] || [];
+  const h = el('div', 'ph'); h.append(el('span', 'date', '언제의 사진?'), el('span', 'cnt num', `${list.length}장`)); p.append(h);
+  p.append(el('p', 'note', '찍은 날짜를 알 수 없는 사진이에요. 골라서 날짜를 정하면 달력으로 옮겨져요.'));
+  if (!list.length) { p.append(el('div', 'empty', '날짜를 알 수 없는 사진이 없어요.')); renderSuspects(p); return; }
+  const acts = el('div', 'panelacts');
   if (!selectMode) {
     const allIn = list.every((x) => tray[x.id]);
     acts.append(
-      mkBtn(allIn ? (isU ? '모두 인쇄 목록에서 빼기' : '이 날 사진 인쇄 목록에서 빼기') : (isU ? '모두 인쇄 목록에 담기' : '이 날 사진 모두 인쇄 목록에 담기'), () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }),
-      mkBtn(isU ? '골라서 날짜 정하기' : '선택해서 다른 날로 옮기기', () => { selectMode = true; chosen.clear(); renderPanel(); })
+      mkb(allIn ? '모두 인쇄 목록에서 빼기' : '모두 인쇄 목록에 담기', 'small', () => { list.forEach((x) => { if (allIn) delete tray[x.id]; else tray[x.id] = tray[x.id] || 1; }); saveTray(); render(); }),
+      mkb('골라서 날짜 정하기', 'small', () => { selectMode = true; chosen.clear(); render(); })
     );
-    p.appendChild(acts);
-    if (canDrag) { const h2 = document.createElement('p'); h2.className = 'note'; h2.textContent = '사진을 끌어서 달력의 다른 날짜에 놓으면 그 날로 옮겨져요.'; p.appendChild(h2); }
   } else {
     const ids = list.map((x) => x.id); [...chosen].forEach((id) => { if (!ids.includes(id)) chosen.delete(id); });
-    const cnt = document.createElement('span'); cnt.className = 'note'; cnt.textContent = `${chosen.size}장 선택`;
-    const di = document.createElement('input'); di.type = 'date'; di.id = 'moveDate'; di.value = isU ? '' : selected; di.className = 'datein'; di.setAttribute('aria-label', '옮길 날짜');
-    const go = mkBtn('이 날짜로 옮기기', () => { if (di.value) movePhotos([...chosen], di.value); }, 'primary'); go.disabled = !chosen.size;
-    di.addEventListener('input', () => { go.disabled = !chosen.size || !di.value; }); if (!di.value) go.disabled = true;
-    acts.append(
-      mkBtn(chosen.size === list.length ? '선택 해제' : '전체 선택', () => { if (chosen.size === list.length) chosen.clear(); else ids.forEach((id) => chosen.add(id)); renderPanel(); }),
-      cnt, di, go
-    );
-    if (!isU) { const u = mkBtn('언제의 사진?으로', () => movePhotos([...chosen], UNDATED)); u.disabled = !chosen.size; acts.append(u); }
-    acts.append(mkBtn('취소', () => { selectMode = false; chosen.clear(); renderPanel(); }));
-    p.appendChild(acts);
+    const di = el('input', 'datein'); di.type = 'date'; di.id = 'moveDate'; di.setAttribute('aria-label', '옮길 날짜');
+    const go = mkb('이 날짜로 옮기기', 'small primary', () => { if (di.value) movePhotos([...chosen], di.value); }); go.disabled = true;
+    di.addEventListener('input', () => { go.disabled = !chosen.size || !di.value; });
+    acts.append(mkb(chosen.size === list.length ? '선택 해제' : '전체 선택', 'small', () => { if (chosen.size === list.length) chosen.clear(); else ids.forEach((id) => chosen.add(id)); render(); }),
+      el('span', 'note', `${chosen.size}장 선택`), di, go, mkb('취소', 'small', () => { selectMode = false; chosen.clear(); render(); }));
   }
-  const tiles = document.createElement('div'); tiles.className = 'tiles';
+  p.append(acts);
+  const tiles = el('div', 'tiles');
   list.forEach((x) => {
-    const f = document.createElement('figure'); f.className = 'tile';
-    const o = document.createElement('button'); o.type = 'button'; o.className = 'open'; o.setAttribute('aria-label', (x.caption || '사진') + ' 편집');
-    o.appendChild(thumbImg(x));
-    if (selectMode) {
-      f.classList.toggle('chosen', chosen.has(x.id)); o.setAttribute('aria-pressed', String(chosen.has(x.id)));
-      o.onclick = () => { if (chosen.has(x.id)) chosen.delete(x.id); else chosen.add(x.id); renderPanel(); };
-    } else o.onclick = () => openPhoto(x.id);
-    if (canDrag && !selectMode) {
-      o.draggable = true;
-      o.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-pa-ids', x.id); e.dataTransfer.effectAllowed = 'move'; });
-    }
-    const pk = document.createElement('button'); pk.type = 'button'; pk.className = 'pick'; const n = tray[x.id] || 0;
-    pk.setAttribute('aria-pressed', String(n > 0)); pk.textContent = n > 0 ? `인쇄 ${n}` : '＋ 인쇄';
+    const f = el('figure', 'tile'); const o = el('button', 'open'); o.type = 'button'; o.setAttribute('aria-label', (x.caption || '사진') + ' 정보'); o.appendChild(thumbImg(x));
+    if (selectMode) { f.classList.toggle('chosen', chosen.has(x.id)); o.setAttribute('aria-pressed', String(chosen.has(x.id))); o.onclick = () => { if (chosen.has(x.id)) chosen.delete(x.id); else chosen.add(x.id); render(); }; }
+    else o.onclick = () => openPhoto(x.id);
+    if (canDrag && !selectMode) { o.draggable = true; o.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-pa-ids', x.id); e.dataTransfer.effectAllowed = 'move'; }); }
+    const n = tray[x.id] || 0; const pk = el('button', 'pick', n ? `인쇄 ${n}` : '＋ 인쇄'); pk.type = 'button'; pk.setAttribute('aria-pressed', String(n > 0));
     pk.onclick = () => { if (tray[x.id]) delete tray[x.id]; else tray[x.id] = 1; saveTray(); render(); };
-    const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = x.caption || (x.takenAt || '').slice(11, 16);
-    if (selectMode) { const ck = document.createElement('span'); ck.className = 'ck'; ck.textContent = chosen.has(x.id) ? '✓' : ''; f.append(o, ck, cap); }
-    else f.append(o, pk, cap);
-    tiles.appendChild(f);
+    const cap = el('div', 'cap', x.caption || '');
+    if (selectMode) { const ck = el('span', 'ck', chosen.has(x.id) ? '✓' : ''); f.append(o, ck, cap); } else f.append(o, pk, cap);
+    tiles.append(f);
   });
-  p.appendChild(tiles);
-  if (isU) renderSuspects(p);
+  p.append(tiles); renderSuspects(p);
 }
 function renderDupAsk(p) {
   const items = dupAsk.ids.map((id) => photos.find((x) => x.id === id)).filter((x) => x && x.date !== dupAsk.date);
@@ -726,16 +985,6 @@ function updateTrayCount() {
   for (const k of Object.keys(tray)) { if (loaded && !ids.has(k)) { delete tray[k]; continue; } n += tray[k]; }
   $('trayCount').textContent = n;
 }
-if (canDrag) {
-  const ub = $('undatedBox');
-  ub.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/x-pa-ids')) { e.preventDefault(); e.stopPropagation(); ub.classList.add('drop'); } });
-  ub.addEventListener('dragleave', () => ub.classList.remove('drop'));
-  ub.addEventListener('drop', (e) => { const ids = e.dataTransfer.getData('text/x-pa-ids'); if (!ids) return; e.preventDefault(); e.stopPropagation(); ub.classList.remove('drop'); movePhotos(ids.split(','), UNDATED); });
-}
-$('undatedBox').onclick = () => { selected = UNDATED; selectMode = false; render(); if (window.innerWidth <= 820) $('panel').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-function shift(dm) { viewM += dm; if (viewM < 0) { viewM = 11; viewY--; } if (viewM > 11) { viewM = 0; viewY++; } renderCal(); }
-$('prevM').onclick = () => shift(-1); $('nextM').onclick = () => shift(1);
-$('todayM').onclick = () => { const t = new Date(); viewY = t.getFullYear(); viewM = t.getMonth(); selected = ymd(t); render(); };
 
 /* ---------------- 사진 편집 ---------------- */
 let ed = null, pmId = null;
@@ -814,7 +1063,7 @@ $('pmSave').onclick = async () => {
   try {
     const upd = await patchPhoto(p, { date, takenAt: !dateChanged ? p.takenAt : `${date}T${(p.takenAt || '').slice(11) || '12:00'}`, src: dateChanged ? 'user' : (p.src || '') }, $('pmCaption').value.trim());
     Object.assign(p, upd); savePhotos();
-    if (dateChanged) { selected = upd.date; if (upd.date !== UNDATED) { viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; } }
+    if (dateChanged && upd.date !== UNDATED && mode !== 'undated') { if (mode === 'week') selected = upd.date; viewY = +upd.date.slice(0, 4); viewM = +upd.date.slice(5, 7) - 1; }
     closePhoto(); render();
   } catch (e) {
     $('pmStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겼어요. 위의 연결 버튼을 누른 뒤 다시 저장해 주세요.' : '저장하지 못했어요. 잠시 후 다시 눌러주세요.';
@@ -824,8 +1073,7 @@ $('pmSave').onclick = async () => {
 $('pmDelete').onclick = async () => {
   const b = $('pmDelete'); if (!pmId) return;
   if (!b.dataset.armed) {
-    const used = (window.PB && window.PB.usedIn(pmId)) || [];
-    b.dataset.armed = '1'; b.textContent = (used.length ? `수첩 ‘${used.join('’, ‘')}’에 쓰인 사진이에요. ` : '') + '한 번 더 누르면 삭제돼요 (드라이브 휴지통으로 이동)'; return;
+    b.dataset.armed = '1'; b.textContent = '한 번 더 누르면 삭제돼요 (드라이브 휴지통으로 이동)'; return;
   }
   const id = pmId; b.disabled = true;
   try {
@@ -1170,16 +1418,18 @@ async function sync(force) {
   if (force) note('드라이브에서 사진 목록을 가져오는 중…');
   try {
     const fresh = await listAll();
+    // 아직 드라이브에 저장 중인 설명·모눈 위치는 덮어쓰지 않는다
+    fresh.forEach((p) => { if (pendingCap[p.id] != null) p.caption = pendingCap[p.id]; if (pendingGeom[p.id]) Object.assign(p, pendingGeom[p.id]); });
+    let plChanged = false; try { plChanged = await loadPlanner(); } catch (e) { if (e instanceof AuthError) throw e; }
     const changed = sig(fresh) !== sig(photos) || !loaded;
     const added = fresh.filter((p) => !photos.some((x) => x.id === p.id)).length;
     photos = fresh; loaded = true; savePhotos(); lastSync = Date.now();
-    if (!jumped && photos.length) {
+    if (!jumped && photos.length && mode === 'month') {
       jumped = true; const mk = `${viewY}-${String(viewM + 1).padStart(2, '0')}`;
       const dated = photos.map((p) => p.date).filter((d) => d !== UNDATED).sort();
       if (dated.length && !dated.some((d) => d.startsWith(mk))) { const last = dated.pop(); selected = last; viewY = +last.slice(0, 4); viewM = +last.slice(5, 7) - 1; }
     }
-    if (changed && $('photoModal').hidden) render(); else updateTrayCount();
-    if (changed && window.PB) window.PB.onPhotos();
+    if ((changed || plChanged) && $('photoModal').hidden && !editingNow()) render(); else updateTrayCount();
     if (force) note('');
     else if (added && changed && document.visibilityState === 'visible') note(`다른 기기에서 추가한 사진 ${added}장을 가져왔어요.`);
     setSyncLabel('동기화됨 ' + hm(new Date()));
@@ -1199,13 +1449,6 @@ $('syncBtn').onclick = async () => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastSync > 10000) sync(false); });
 window.addEventListener('focus', () => { if (Date.now() - lastSync > 10000) sync(false); });
 setInterval(() => { if (document.visibilityState === 'visible' && Auth.valid()) sync(false); }, 40000);
-
-/* ---------------- 수첩(book.js)에서 쓰는 기능 ---------------- */
-window.PA = {
-  get photos() { return photos; }, api, API, UPLOAD, q, store, ymd, hm, note, dayLabel, UNDATED, AuthError, Auth, IDB,
-  getThumb, fullBlob, findDup, ensureFolder, findOrCreate, showConnect, CLIENT_ID,
-  savePdf: (doc, name) => { const url = URL.createObjectURL(doc.output('blob')); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
-};
 
 /* ---------------- 시작 ---------------- */
 if ('serviceWorker' in navigator) {
