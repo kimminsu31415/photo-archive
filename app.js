@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.15-2'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.20-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -732,7 +732,7 @@ function buildWeekPage(g, mon, sun, day) {
   const minis = el('div', 'minis'); minis.append(miniCal(new Date(mon.getFullYear(), mon.getMonth(), 1), mon, sun));
   if (isWide()) minis.append(miniCal(new Date(mon.getFullYear(), mon.getMonth() + 1, 1), mon, sun));
   head.append(t, minis); s.append(head);
-  const rows = el('div', 'wrows'); const maxN = isWide() ? 5 : 4;
+  const rows = el('div', 'wrows');
   for (let i = 0; i < 7; i++) {
     const dt = addDays(mon, i); const k = ymd(dt); const list = g[k] || []; const { rep } = repOf(k, list);
     const row = el('div', 'wr' + (k === day ? ' on' : ''));
@@ -741,13 +741,13 @@ function buildWeekPage(g, mon, sun, day) {
     const db = el('button', 'wr-d' + (i === 6 ? ' sun' : '')); db.type = 'button'; db.setAttribute('aria-label', `${dt.getMonth() + 1}월 ${dt.getDate()}일 사진 보기`); db.onclick = pick;
     db.append(el('span', 'wr-n', String(dt.getDate())), el('span', 'wr-w', WKM[i]));
     const th = el('div', 'wr-th');
-    list.slice(0, maxN).forEach((p) => {
+    list.forEach((p) => {
       const b = el('button', 'wr-p'); b.type = 'button'; b.setAttribute('aria-label', `${dt.getMonth() + 1}월 ${dt.getDate()}일 ${(p.takenAt || '').slice(11, 16)} 사진`); b.onclick = pick;
       b.appendChild(thumbImg(p)); if (p === rep) b.append(el('span', 'tag', '대표'));
       if (canDrag) { b.draggable = true; b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-pa-ids', p.id); e.dataTransfer.effectAllowed = 'move'; }); }
       th.append(b);
     });
-    if (list.length > maxN) th.append(el('span', 'wr-more', `+${list.length - maxN}`));
+    if (list.length > 1) th.setAttribute('aria-label', `사진 ${list.length}장, 옆으로 밀어서 보기`);
     dropTarget(row, k);
     row.append(db, th); rows.append(row);
   }
@@ -876,6 +876,7 @@ function renderWeek(g) {
     // 왼쪽으로 밀면 모눈 쪽, 오른쪽으로 밀면 주간 쪽 (사진 옮기기·글쓰기와는 겹치지 않게)
     view.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.card, textarea, input, label')) return;
+      const row = e.target.closest('.wr-th'); if (row && row.scrollWidth > row.clientWidth + 2) return; // 사진 줄은 옆으로 밀어 사진 보기
       const sx = e.clientX, sy = e.clientY;
       const up = (ev) => {
         window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
