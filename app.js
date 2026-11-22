@@ -7,7 +7,7 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const UNDATED = 'undated'; // 찍은 날짜를 알 수 없는 사진
-const APP_VERSION = '11.20-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
+const APP_VERSION = '11.22-1'; // 설정 화면에 표시: 기기마다 같은 버전인지 확인용
 const FIELDS = 'id,name,parents,description,appProperties,createdTime,imageMediaMetadata(width,height)';
 const A4W = 210, A4H = 297, DPMM = 300 / 25.4;
 const WK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -1095,11 +1095,14 @@ function layout() {
   return { cols, rows, per: cols * rows, cells };
 }
 const trayItems = () => Object.keys(tray).map((id) => photos.find((p) => p.id === id)).filter(Boolean).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || ''));
-async function prepared() {
-  const out = [];
-  for (const p of trayItems()) { const im = await loadFull(p); out.push({ p, n: tray[p.id], src: rotated(im, p.rot || 0), zoom: p.zoom || 1, cx: p.cx, cy: p.cy }); }
-  return out;
+const prepOne = async (p) => { const im = await loadFull(p); return { p, n: tray[p.id], src: rotated(im, p.rot || 0), zoom: p.zoom || 1, cx: p.cx, cy: p.cy }; };
+// 여러 장을 동시에(4장씩) 불러온다. onEach가 있으면 한 장 끝날 때마다 알려준다
+async function pool(list, fn, onEach, stop) {
+  const out = new Array(list.length); let i = 0;
+  const worker = async () => { while (i < list.length) { if (stop && stop()) return; const k = i++; out[k] = await fn(list[k], k); if (onEach) onEach(out[k], k); } };
+  await Promise.all([worker(), worker(), worker(), worker()]); return out;
 }
+async function prepared() { return pool(trayItems(), prepOne); }
 let tok = 0;
 async function renderPrint() {
   const ul = $('tray'); ul.innerHTML = ''; const items = trayItems();
@@ -1125,22 +1128,31 @@ async function renderPrint() {
   $('prSummary').textContent = L.per ? `A4 한 장에 ${L.cols}×${L.rows} = ${L.per}칸 · ${total}장 · ${pages}페이지` : '사진이 A4에 들어가지 않아요. 크기나 여백을 줄여주세요.';
   $('prSave').disabled = !total || !L.per; render();
   if (ed) { $('ceSize').textContent = `${S.w / 10}×${S.h / 10} cm`; drawCrop(); }
-  const t = ++tok; const box = $('prPages');
-  let prep; try { prep = await prepared(); } catch (e) { if (t === tok) { box.innerHTML = ''; $('prStatus').textContent = e instanceof AuthError ? '구글 연결이 끊겨서 미리보기를 못 만들었어요. 다시 연결해 주세요.' : '사진을 불러오지 못했어요.'; } return; }
-  if (t !== tok) return;
-  box.innerHTML = ''; if (!L.per) return;
-  const urls = {}; prep.forEach((it) => { urls[it.p.id] = renderCrop(it, Math.round(S.w * 4), Math.round(S.h * 4)).toDataURL('image/jpeg', 0.8); });
-  const all = []; prep.forEach((it) => { for (let i = 0; i < it.n; i++) all.push(it.p.id); });
+  // 미리보기: 칸을 먼저 모두 그리고(작은 사진), 원본을 불러오는 대로 실제 인쇄 모양으로 바꾼다
+  const t = ++tok; const box = $('prPages'); box.innerHTML = ''; $('prStatus').textContent = '';
+  if (!L.per) return;
+  const all = []; items.forEach((p) => { for (let i = 0; i < tray[p.id]; i++) all.push(p); });
+  const imgs = {};
   for (let pg = 0; pg < Math.max(1, Math.ceil(all.length / L.per)); pg++) {
     const lab = document.createElement('div'); lab.className = 'plabel'; lab.textContent = `PAGE ${pg + 1}`;
     const a4 = document.createElement('div'); a4.className = 'a4';
     L.cells.forEach((c, i) => {
-      const id = all[pg * L.per + i]; if (!id) return; const d = document.createElement('div'); d.className = 'cell' + (S.cut ? ' cut' : '');
+      const p = all[pg * L.per + i]; if (!p) return; const d = document.createElement('div'); d.className = 'cell' + (S.cut ? ' cut' : '');
       d.style.left = c.x / A4W * 100 + '%'; d.style.top = c.y / A4H * 100 + '%'; d.style.width = S.w / A4W * 100 + '%'; d.style.height = S.h / A4H * 100 + '%';
-      const im = document.createElement('img'); im.alt = ''; im.src = urls[id]; d.appendChild(im); d.title = '눌러서 편집'; d.onclick = () => openCrop(id); a4.appendChild(d);
+      const im = document.createElement('img'); im.alt = ''; (imgs[p.id] = imgs[p.id] || []).push(im);
+      getThumb(p.id).then((u) => { if (!im.dataset.full && t === tok) im.src = u; }).catch(() => {});
+      d.appendChild(im); d.title = '눌러서 편집'; d.onclick = () => openCrop(p.id); a4.appendChild(d);
     });
     box.append(lab, a4);
   }
+  let done = 0, fail = 0, authFail = false;
+  const status = () => { if (t !== tok) return; $('prStatus').textContent = done < items.length ? `미리보기 불러오는 중 ${done} / ${items.length}` : fail ? (authFail ? `구글 연결이 끊겨서 ${fail}장을 못 불러왔어요. 다시 연결한 뒤 인쇄 목록을 다시 열어주세요.` : `${fail}장을 불러오지 못했어요. 인쇄 목록을 닫았다 다시 열어주세요.`) : ''; };
+  status();
+  await pool(items, async (p) => {
+    try { const it = await prepOne(p); if (t !== tok) return; const u = renderCrop(it, Math.round(S.w * 4), Math.round(S.h * 4)).toDataURL('image/jpeg', 0.8); (imgs[p.id] || []).forEach((im) => { im.dataset.full = '1'; im.src = u; }); }
+    catch (e) { fail++; if (e instanceof AuthError) { authFail = true; showConnect(); } }
+    finally { done++; status(); }
+  }, null, () => t !== tok);
 }
 function openPrint() {
   $('printModal').hidden = false; $('prStatus').textContent = '';

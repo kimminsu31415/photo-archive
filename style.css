@@ -199,7 +199,7 @@ button{cursor:pointer}
 .pages{display:flex;flex-direction:column;gap:14px;align-items:center}
 .a4{position:relative;width:100%;max-width:330px;aspect-ratio:210/297;background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,.25)}
 .a4 .cell{position:absolute;overflow:hidden}
-.a4 .cell img{width:100%;height:100%;display:block;max-width:none}
+.a4 .cell img{width:100%;height:100%;display:block;max-width:none;object-fit:cover}
 .a4 .cell.cut{outline:.5px solid #bbb}
 .plabel{font-family:var(--mono);font-size:.72rem;align-self:flex-start;color:var(--muted)}
 .status{font-size:.82rem;min-height:1.3em}
