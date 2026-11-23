@@ -267,3 +267,10 @@ img{max-width:100%}
 
 .tray .lbl .psz{margin-left:6px;padding:0 5px;border:1px solid var(--rule-strong);font-size:.72rem;color:var(--muted)}
 .cesz{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+/* 미래의 나: 다이어리 맨 뒤 빈 페이지 */
+.book.future{flex-direction:column;align-items:center;gap:28px}
+.book.future.narrow>.pp+.pp{margin-top:16px}
+.pp.fp .dpfoot{align-items:center}
+.fpno{margin-left:auto;font-size:11px;color:var(--light);letter-spacing:.1em}
+.pp.fp .dpdate{white-space:nowrap}
+.pp.fp .dphead{flex-wrap:wrap}
