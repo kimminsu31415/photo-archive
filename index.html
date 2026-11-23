@@ -96,6 +96,14 @@
       <div class="stack">
         <section class="cropedit" id="cropEdit" hidden aria-label="인쇄 영역 편집">
           <div class="row ceh"><b id="ceTitle">사진 편집</b><span class="note" id="ceSize"></span></div>
+          <div class="cesz">
+            <span class="note">이 사진만 크기 바꾸기</span>
+            <div class="presets" id="ceSizes"></div>
+            <div class="grid2">
+              <label class="field">가로 (mm)<input type="number" id="ceW" min="5" max="190" step="0.5"></label>
+              <label class="field">세로 (mm)<input type="number" id="ceH" min="5" max="277" step="0.5"></label>
+            </div>
+          </div>
         <div class="cropbox" id="cropbox"><canvas id="cropCanvas" width="360" height="240"></canvas></div>
         <p class="note" id="cropHint"></p>
         <div class="row"><span class="note">확대</span><input type="range" id="zoom" min="1" max="4" step="0.01" value="1" aria-label="확대"></div>
@@ -114,6 +122,7 @@
         <div class="presets" id="presets">
           <button class="btn small" type="button" data-w="34" data-h="23">캘린더형 3.4×2.3 cm</button>
           <button class="btn small" type="button" data-w="26" data-h="26">리스트형 2.6×2.6 cm</button>
+          <button class="btn small" type="button" data-w="51" data-h="83">핸드폰 메모 5.1×8.3 cm</button>
         </div>
         <div class="grid2">
           <label class="field">가로 (mm)<input type="number" id="sw" min="5" max="210" step="0.5" value="34"></label>
@@ -121,7 +130,7 @@
           <label class="field">간격 (mm)<input type="number" id="sgap" min="0" max="20" step="0.5" value="2"></label>
         </div>
         <label class="check"><input type="checkbox" id="scut" checked> 재단선 표시</label>
-        <p class="note">스티커 용지에 맞춰 가장자리 1cm는 항상 비우고, 사진 묶음을 용지 가운데에 놓아요.</p>
+        <p class="note">위에서 기본 크기를 고르고, 다른 크기로 뽑을 사진은 ‘편집’에서 그 사진만 크기를 바꿔요. 큰 사진부터 놓고 남는 자리에 작은 사진을 채워요. 가장자리 1cm는 항상 비우고 사진 묶음을 용지 가운데에 놓아요.</p>
         <p class="note" id="prSummary"></p>
         <div class="row"><button class="btn primary" type="button" id="prSave">PDF 저장</button><button class="btn" type="button" id="prClear">목록 비우기</button></div>
         <div class="status" id="prStatus" role="status"></div>
